@@ -1,0 +1,192 @@
+"""Scouting / generation: run the Donation-Bet pipeline for one model.
+
+    baseline (N) -> estimate judge -> threshold (median) -> above_good (N) + below_good (N)
+    -> trajectory judge (optional here; scripts/02_judge_paper.py also does it)
+
+Samplers
+  --sampler vllm    any OpenAI-compatible server (vLLM on RunPod).  --model is the served model id.
+                    env VLLM_BASE_URL / VLLM_API_KEY (or --base-url / --api-key)
+  --sampler tinker  Tinker base model, e.g. Qwen/Qwen3.6-27B, openai/gpt-oss-120b.  env TINKER_API_KEY.
+
+Examples
+  python scripts/01_generate.py --sampler tinker --model Qwen/Qwen3.6-27B --count 100 --max-tokens 32000
+  python scripts/01_generate.py --sampler tinker --model openai/gpt-oss-120b --renderer gpt_oss_high_reasoning --count 100
+  python scripts/01_generate.py --sampler vllm --model Qwen/Qwen3.6-27B --base-url http://localhost:8000/v1 --count 100 \
+        --extra-body '{"chat_template_kwargs": {"enable_thinking": true}}'
+  python scripts/01_generate.py --sampler vllm --model openai/gpt-oss-120b --extra-body '{"reasoning_effort": "high"}' --count 100
+
+Resumable: re-running with the same --run-dir only samples rollouts that are missing or errored.
+Judging of baseline finals (needed for the threshold) uses ANTHROPIC_API_KEY and --judge-model (default claude-haiku-4-5).
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
+import re
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+
+from _common import RUNS_ROOT  # noqa: E402
+from forensics.judges.anthropic_judge import AnthropicJudge  # noqa: E402
+from forensics.judges.prompts_paper import NUMBER_JUDGE_PROMPT, parse_tagged_estimate  # noqa: E402
+from forensics.prompts import build_prompt  # noqa: E402
+from forensics.runs import write_json  # noqa: E402
+
+
+def _slug(model: str) -> str:
+    return re.sub(r"[^A-Za-z0-9.\-]+", "-", model.split("/")[-1]).strip("-").lower()
+
+
+def make_sampler(args):
+    extra = json.loads(args.extra_body) if args.extra_body else None
+    if args.sampler == "vllm":
+        from forensics.samplers.vllm_openai import VLLMOpenAISampler
+        return VLLMOpenAISampler(model=args.model, base_url=args.base_url, api_key=args.api_key,
+                                 max_tokens=args.max_tokens, temperature=args.temperature, top_p=args.top_p,
+                                 max_concurrent=args.concurrency, extra_body=extra)
+    if args.sampler == "tinker":
+        from forensics.samplers.tinker_sampler import TinkerSampler
+        return TinkerSampler(base_model=args.model, renderer_name=args.renderer, max_tokens=args.max_tokens,
+                             temperature=args.temperature, top_p=args.top_p,
+                             samples_per_call=args.samples_per_call, max_concurrent_calls=args.concurrency,
+                             seed=args.seed)
+    raise SystemExit(f"unknown sampler {args.sampler}")
+
+
+def _load_existing(path: Path) -> dict | None:
+    if path.exists():
+        try:
+            return json.loads(path.read_text())
+        except Exception:
+            return None
+    return None
+
+
+async def sample_condition(sampler, condition: str, threshold: int | None, count: int, out_path: Path, meta: dict) -> dict:
+    prompt = build_prompt(condition, threshold)
+    existing = _load_existing(out_path)
+    rows_by_i: dict[int, dict] = {}
+    if existing and existing.get("prompt") == prompt:
+        for r in existing.get("rows", []):
+            if "error" not in r and (r.get("reasoning") or r.get("content")):
+                rows_by_i[r["i"]] = r
+    missing = [i for i in range(count) if i not in rows_by_i]
+    print(f"[{condition}] have {len(rows_by_i)}/{count}; sampling {len(missing)} more")
+    # sample missing indices in contiguous chunks (samplers take start_index + n)
+    if missing:
+        # group into runs of consecutive indices
+        chunks = []
+        start = prev = missing[0]
+        for i in missing[1:]:
+            if i == prev + 1:
+                prev = i
+                continue
+            chunks.append((start, prev - start + 1))
+            start = prev = i
+        chunks.append((start, prev - start + 1))
+        for start, n in chunks:
+            new_rows = await sampler.sample(prompt, n, start_index=start)
+            for r in new_rows:
+                rows_by_i[r["i"]] = r
+            # checkpoint after every chunk
+            _write(out_path, meta, condition, threshold, prompt, rows_by_i, count)
+    _write(out_path, meta, condition, threshold, prompt, rows_by_i, count)
+    ok = sum(1 for r in rows_by_i.values() if "error" not in r)
+    trunc = sum(1 for r in rows_by_i.values() if "error" not in r and str(r.get("finish_reason")).startswith("length"))
+    print(f"[{condition}] done: {ok}/{count} ok ({trunc} hit max_tokens) -> {out_path}")
+    return {"rows": [rows_by_i.get(i, {"i": i, "error": "missing"}) for i in range(count)]}
+
+
+def _write(out_path, meta, condition, threshold, prompt, rows_by_i, count):
+    rows = [rows_by_i.get(i, {"i": i, "error": "missing"}) for i in range(count)]
+    write_json(out_path, {**meta, "condition": condition, "threshold": threshold, "prompt": prompt, "rows": rows})
+
+
+async def judge_baseline_finals(run_dir: Path, rows: list[dict], judge_model: str, concurrency: int) -> list:
+    judge = AnthropicJudge(model=judge_model, cache_dir=run_dir / "judge_cache" / "estimates", max_concurrent=concurrency)
+    prompts = {f"baseline/{r['i']}": NUMBER_JUDGE_PROMPT.format(llm_text=r.get("content") or "")
+               for r in rows if "error" not in r and (r.get("content") or "").strip()}
+    res = await judge.run(prompts, max_tokens=256, desc="estimate judge (baseline)")
+    out = [None] * len(rows)
+    for k, v in res.items():
+        i = int(k.split("/")[1])
+        out[i] = parse_tagged_estimate(v.get("text")) if "text" in v else None
+    print(judge.report())
+    return out
+
+
+async def main_async(args):
+    sampler = make_sampler(args)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(args.run_dir) if args.run_dir else RUNS_ROOT / f"{_slug(args.model)}_{stamp}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    meta = {"model": args.model, "backend": args.sampler, "provider": None,
+            "max_tokens": args.max_tokens, "reasoning_effort": args.renderer or (args.extra_body or None)}
+    config = {"model": _slug(args.model), "model_id": args.model, "backend": args.sampler, "provider": None,
+              "task": "giraffes", "count": args.count, "target_max_tokens": args.max_tokens,
+              "target_reasoning_effort": args.renderer or args.extra_body, "judge_model": args.judge_model,
+              "temperature": args.temperature, "top_p": args.top_p, "sampler": sampler.describe()}
+    write_json(run_dir / "config.json", config)
+    print(f"run dir: {run_dir}")
+
+    # 1) baseline
+    base = await sample_condition(sampler, "baseline", None, args.count, run_dir / "baseline.json", meta)
+
+    # 2) threshold = median of judged baseline finals
+    thr_path = run_dir / "threshold.json"
+    if args.threshold is not None:
+        threshold = int(args.threshold)
+        write_json(thr_path, {"threshold": threshold, "n_baseline": args.count, "n_valid": None, "unknown_rate": None,
+                              "note": "threshold supplied on the command line"})
+        estimates = {"baseline": [None] * args.count}
+    else:
+        finals = await judge_baseline_finals(run_dir, base["rows"], args.judge_model, args.judge_concurrency)
+        valid = [e for e in finals if e is not None]
+        if not valid:
+            raise SystemExit("no baseline estimate parsed — cannot set a threshold")
+        threshold = int(round(float(np.percentile(valid, 50))))
+        write_json(thr_path, {"threshold": threshold, "n_baseline": args.count, "n_valid": len(valid),
+                              "unknown_rate": 1 - len(valid) / args.count})
+        estimates = {"baseline": finals}
+        write_json(run_dir / "estimates.json", estimates)
+    print(f"threshold = {threshold:,}")
+
+    # 3) incentive conditions
+    await asyncio.gather(
+        sample_condition(sampler, "below_good", threshold, args.count, run_dir / "below_good.json", meta),
+        sample_condition(sampler, "above_good", threshold, args.count, run_dir / "above_good.json", meta),
+    )
+    print("generation complete. Next: python scripts/02_judge_paper.py --run-dir", run_dir)
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--sampler", choices=["vllm", "tinker"], required=True)
+    ap.add_argument("--model", required=True, help="served model id (vllm) or Tinker base model")
+    ap.add_argument("--count", type=int, default=100)
+    ap.add_argument("--max-tokens", type=int, default=32000)
+    ap.add_argument("--temperature", type=float, default=1.0)
+    ap.add_argument("--top-p", type=float, default=1.0)
+    ap.add_argument("--concurrency", type=int, default=16, help="vllm: concurrent requests; tinker: concurrent sample() calls")
+    ap.add_argument("--run-dir", default=None, help="existing/target run dir (default: data/runs/<model>_<stamp>)")
+    ap.add_argument("--threshold", type=int, default=None, help="skip baseline judging and use this threshold")
+    ap.add_argument("--judge-model", default="claude-haiku-4-5")
+    ap.add_argument("--judge-concurrency", type=int, default=16)
+    # vllm
+    ap.add_argument("--base-url", default=None)
+    ap.add_argument("--api-key", default=None)
+    ap.add_argument("--extra-body", default=None, help='JSON passed as extra_body (e.g. {"reasoning_effort":"high"})')
+    # tinker
+    ap.add_argument("--renderer", default=None, help="tinker_cookbook renderer name (default: recommended for model)")
+    ap.add_argument("--samples-per-call", type=int, default=16)
+    ap.add_argument("--seed", type=int, default=None)
+    args = ap.parse_args()
+    asyncio.run(main_async(args))
+
+
+if __name__ == "__main__":
+    main()

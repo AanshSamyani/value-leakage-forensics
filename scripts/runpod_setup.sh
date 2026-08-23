@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# One-time setup on a RunPod pod. Everything goes under /workspace (the only persistent volume).
+# Usage:  bash scripts/runpod_setup.sh            (run from anywhere; re-running is safe)
+set -euo pipefail
+
+export WORKSPACE=/workspace
+export HF_HOME=$WORKSPACE/hf                      # model weights + tokenizers cache
+export PIP_CACHE_DIR=$WORKSPACE/.cache/pip
+export XDG_CACHE_HOME=$WORKSPACE/.cache
+mkdir -p "$HF_HOME" "$PIP_CACHE_DIR" "$WORKSPACE/.cache"
+
+REPO_URL=${REPO_URL:-https://github.com/AanshSamyani/value-leakage-forensics.git}
+REPO_DIR=$WORKSPACE/value-leakage-forensics
+VENV=$WORKSPACE/venv
+
+# 1) repo
+if [ ! -d "$REPO_DIR/.git" ]; then
+  git clone "$REPO_URL" "$REPO_DIR"
+else
+  (cd "$REPO_DIR" && git pull --ff-only)
+fi
+
+# 2) python env (persistent)
+if [ ! -x "$VENV/bin/python" ]; then
+  python3 -m venv "$VENV"
+fi
+source "$VENV/bin/activate"
+python -m pip install -U pip wheel
+pip install -e "$REPO_DIR"                 # anthropic, openai, numpy, pandas, scipy, matplotlib, tqdm, dotenv
+pip install -U vllm                        # pulls its own torch; ~10 min the first time
+pip install -U "huggingface_hub[cli]"
+
+# 3) data: Aditya's 10 runs
+bash "$REPO_DIR/scripts/fetch_aditya_runs.sh"
+
+# 4) persistent env vars for every new shell
+BASHRC_SNIPPET='# --- value-leakage-forensics ---
+export HF_HOME=/workspace/hf
+export PIP_CACHE_DIR=/workspace/.cache/pip
+export XDG_CACHE_HOME=/workspace/.cache
+export VLLM_BASE_URL=http://localhost:8000/v1
+export VLLM_API_KEY=EMPTY
+source /workspace/venv/bin/activate
+cd /workspace/value-leakage-forensics
+set -a; [ -f .env ] && source .env; set +a
+# --- end ---'
+grep -q "value-leakage-forensics ---" ~/.bashrc 2>/dev/null || echo "$BASHRC_SNIPPET" >> ~/.bashrc
+# RunPod pods are often recreated from the image: keep a copy of the snippet in /workspace too
+echo "$BASHRC_SNIPPET" > $WORKSPACE/env.sh
+
+echo
+echo "Setup done. Next:"
+echo "  1) create $REPO_DIR/.env with ANTHROPIC_API_KEY=...   (cp .env.example .env)"
+echo "  2) source /workspace/env.sh   (or open a new shell)"
+echo "  3) bash scripts/serve_vllm.sh Qwen/Qwen3.6-27B      (in a tmux window)"

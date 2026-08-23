@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+build/
+dist/
+# data: fetched/generated on the server, not committed
+data/runs/
+data/aditya_repo/
+# judge caches are large; keep the aggregated json files in the run dir instead
+**/judge_cache/
+.DS_Store
