@@ -24,6 +24,7 @@ GPU_MEM=${GPU_MEM:-0.92}
 MAX_NUM_SEQS=${MAX_NUM_SEQS:-128}
 CHAT_TEMPLATE_KWARGS=${CHAT_TEMPLATE_KWARGS:-}
 
+export VLLM_WORKER_MULTIPROC_METHOD=spawn   # avoid fork-with-CUDA crash in vLLM EngineCore
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 set -a; [ -f .env ] && source .env; set +a

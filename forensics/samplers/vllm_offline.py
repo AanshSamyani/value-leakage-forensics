@@ -32,6 +32,11 @@ class VLLMOfflineSampler:
         download_dir: str | None = None,
         max_num_seqs: int = 128,
     ):
+        import os
+        # vLLM forks its EngineCore worker; if CUDA got initialized in this parent first, a forked child
+        # dies with "Cannot re-initialize CUDA in forked subprocess". vLLM's auto-detection of this is
+        # timing-dependent (it caught it on Qwen3.6-27B, missed it on Qwen3.5-35B-A3B-FP8), so force spawn.
+        os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
         from vllm import LLM  # heavy import; keep local
 
         self.model = model
