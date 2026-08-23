@@ -27,9 +27,10 @@ fi
 source "$VENV/bin/activate"
 python -m pip install -U pip wheel uv
 pip install -e "$REPO_DIR"                 # anthropic, openai, numpy, pandas, scipy, matplotlib, tqdm, dotenv
-# vLLM + torch matched to THIS pod's NVIDIA driver (avoids "driver too old" when /workspace
-# outlives the pod and the next host has a different CUDA version):
-uv pip install -U --torch-backend=auto vllm
+# vLLM + the whole torch family matched to THIS pod's NVIDIA driver (avoids "driver too old" /
+# "compiled with different CUDA versions" when /workspace outlives the pod). torchvision/torchaudio
+# are pulled in by transformers when present, so they must move in lockstep with torch:
+uv pip install -U --torch-backend=auto vllm torchvision torchaudio
 pip install -U "huggingface_hub[cli]"
 python - <<'PYCHECK'
 import torch
