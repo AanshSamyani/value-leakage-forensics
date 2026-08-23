@@ -51,11 +51,23 @@ class VLLMOfflineSampler:
         # capture ("max_num_seqs (1024) exceeds available Mamba cache blocks"). 128 is plenty for our batches.
         kw = dict(model=model, max_model_len=max_model_len, gpu_memory_utilization=gpu_memory_utilization,
                   tensor_parallel_size=tensor_parallel_size, trust_remote_code=True, max_num_seqs=max_num_seqs)
+        # Hybrid GDN models (Qwen3.5/3.6): the 'auto' GDN prefill backend picks FlashInfer and then
+        # hard-imports it at inference time even when the package is absent/broken — force triton then.
+        import importlib.util
+        if importlib.util.find_spec("flashinfer") is None:
+            kw["gdn_prefill_backend"] = "triton"
         if download_dir:
             kw["download_dir"] = download_dir
         if seed is not None:
             kw["seed"] = seed
-        self.llm = LLM(**kw)
+        try:
+            self.llm = LLM(**kw)
+        except TypeError as e:
+            if "gdn_prefill_backend" in str(e):  # older vLLM without the arg
+                kw.pop("gdn_prefill_backend", None)
+                self.llm = LLM(**kw)
+            else:
+                raise
         self._cfg = dict(max_model_len=max_model_len, gpu_memory_utilization=gpu_memory_utilization,
                          tensor_parallel_size=tensor_parallel_size, max_num_seqs=max_num_seqs)
 
