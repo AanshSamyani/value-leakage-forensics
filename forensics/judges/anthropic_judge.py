@@ -39,9 +39,12 @@ class AnthropicJudge:
         cache_dir: str | Path | None = None,
         max_concurrent: int = 16,
         max_attempts: int = 6,
-        temperature: float = 0.0,
+        temperature: float | None = None,
         system: str | None = None,
     ):
+        # NOTE: anthropic SDK 1.x removed temperature/top_p/top_k from messages.create() (TypeError).
+        # Older models (Haiku 4.5, Sonnet 4.6...) still accept them via extra_body; Sonnet 5 / Opus 4.7+ reject
+        # non-default values. Default None = don't send; if set, it is passed through extra_body.
         self.model = model
         self.cache_dir = Path(cache_dir) if cache_dir else None
         if self.cache_dir:
@@ -75,7 +78,7 @@ class AnthropicJudge:
         if self.system:
             kwargs["system"] = self.system
         if self.temperature is not None:
-            kwargs["temperature"] = self.temperature
+            kwargs["extra_body"] = {"temperature": self.temperature}
         last_err = None
         for attempt in range(self.max_attempts):
             async with sem:
