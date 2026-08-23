@@ -27,17 +27,23 @@ fi
 source "$VENV/bin/activate"
 python -m pip install -U pip wheel uv
 pip install -e "$REPO_DIR"                 # anthropic, openai, numpy, pandas, scipy, matplotlib, tqdm, dotenv
-# vLLM + the whole torch family matched to THIS pod's NVIDIA driver (avoids "driver too old" /
-# "compiled with different CUDA versions" when /workspace outlives the pod). torchvision/torchaudio
-# are pulled in by transformers when present, so they must move in lockstep with torch:
-uv pip install -U --torch-backend=auto vllm torchvision torchaudio
+# vLLM + torch matched to THIS pod's NVIDIA driver (avoids "driver too old" when /workspace
+# outlives the pod and the next host has a different CUDA version):
+uv pip install -U --torch-backend=auto vllm
+# torchaudio is never needed (transformers skips audio when absent) and a stale CUDA variant of it
+# breaks transformers' import; torchvision IS used by the Qwen-VL processor and its version number
+# does not change across CUDA variants, so -U is a no-op — force the matching build every time:
+pip uninstall -y torchaudio >/dev/null 2>&1 || true
+uv pip install --reinstall --torch-backend=auto torchvision
 pip install -U "huggingface_hub[cli]"
 python - <<'PYCHECK'
-import torch
+import torch, torchvision
 ok = torch.cuda.is_available()
-print(f"torch {torch.__version__} (cuda {torch.version.cuda}) — cuda available: {ok}")
+print(f"torch {torch.__version__} (cuda {torch.version.cuda}) | torchvision {torchvision.__version__} — cuda available: {ok}")
 if not ok:
     raise SystemExit("torch cannot see the GPU: driver/build mismatch — rerun this script or pick a pod with a newer CUDA driver")
+import vllm
+print(f"vllm {vllm.__version__} import ok")
 PYCHECK
 
 # 3) data: Aditya's 10 runs (optional; FETCH_ADITYA=1 to include)
