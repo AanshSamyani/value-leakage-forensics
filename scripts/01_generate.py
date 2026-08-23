@@ -4,11 +4,15 @@
     -> trajectory judge (optional here; scripts/02_judge_paper.py also does it)
 
 Samplers
-  --sampler vllm    any OpenAI-compatible server (vLLM on RunPod).  --model is the served model id.
-                    env VLLM_BASE_URL / VLLM_API_KEY (or --base-url / --api-key)
-  --sampler tinker  Tinker base model, e.g. Qwen/Qwen3.6-27B, openai/gpt-oss-120b.  env TINKER_API_KEY.
+  --sampler vllm_offline  in-process vLLM (no server): loads the model in this script, samples, exits. Simplest.
+                          --max-model-len / --gpu-mem / --tp / --chat-template-kwargs
+  --sampler vllm          any OpenAI-compatible server (vllm serve on the pod).  --model is the served model id.
+                          env VLLM_BASE_URL / VLLM_API_KEY (or --base-url / --api-key)
+  --sampler tinker        Tinker base model, e.g. Qwen/Qwen3.6-27B, openai/gpt-oss-120b.  env TINKER_API_KEY.
 
 Examples
+  python scripts/01_generate.py --sampler vllm_offline --model Qwen/Qwen3.6-27B --count 100 --max-tokens 32000
+  python scripts/01_generate.py --sampler vllm_offline --model openai/gpt-oss-120b --chat-template-kwargs '{"reasoning_effort":"high"}' --count 100
   python scripts/01_generate.py --sampler tinker --model Qwen/Qwen3.6-27B --count 100 --max-tokens 32000
   python scripts/01_generate.py --sampler tinker --model openai/gpt-oss-120b --renderer gpt_oss_high_reasoning --count 100
   python scripts/01_generate.py --sampler vllm --model Qwen/Qwen3.6-27B --base-url http://localhost:8000/v1 --count 100 \
@@ -48,6 +52,13 @@ def make_sampler(args):
         return VLLMOpenAISampler(model=args.model, base_url=args.base_url, api_key=args.api_key,
                                  max_tokens=args.max_tokens, temperature=args.temperature, top_p=args.top_p,
                                  max_concurrent=args.concurrency, extra_body=extra)
+    if args.sampler == "vllm_offline":
+        from forensics.samplers.vllm_offline import VLLMOfflineSampler
+        ctk = json.loads(args.chat_template_kwargs) if args.chat_template_kwargs else None
+        return VLLMOfflineSampler(model=args.model, max_tokens=args.max_tokens, temperature=args.temperature,
+                                  top_p=args.top_p, max_model_len=args.max_model_len,
+                                  gpu_memory_utilization=args.gpu_mem, tensor_parallel_size=args.tp,
+                                  chat_template_kwargs=ctk, seed=args.seed)
     if args.sampler == "tinker":
         from forensics.samplers.tinker_sampler import TinkerSampler
         return TinkerSampler(base_model=args.model, renderer_name=args.renderer, max_tokens=args.max_tokens,
@@ -125,10 +136,10 @@ async def main_async(args):
     run_dir = Path(args.run_dir) if args.run_dir else RUNS_ROOT / f"{_slug(args.model)}_{stamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     meta = {"model": args.model, "backend": args.sampler, "provider": None,
-            "max_tokens": args.max_tokens, "reasoning_effort": args.renderer or (args.extra_body or None)}
+            "max_tokens": args.max_tokens, "reasoning_effort": args.renderer or args.extra_body or args.chat_template_kwargs or None}
     config = {"model": _slug(args.model), "model_id": args.model, "backend": args.sampler, "provider": None,
               "task": "giraffes", "count": args.count, "target_max_tokens": args.max_tokens,
-              "target_reasoning_effort": args.renderer or args.extra_body, "judge_model": args.judge_model,
+              "target_reasoning_effort": args.renderer or args.extra_body or args.chat_template_kwargs, "judge_model": args.judge_model,
               "temperature": args.temperature, "top_p": args.top_p, "sampler": sampler.describe()}
     write_json(run_dir / "config.json", config)
     print(f"run dir: {run_dir}")
@@ -165,7 +176,7 @@ async def main_async(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--sampler", choices=["vllm", "tinker"], required=True)
+    ap.add_argument("--sampler", choices=["vllm_offline", "vllm", "tinker"], required=True)
     ap.add_argument("--model", required=True, help="served model id (vllm) or Tinker base model")
     ap.add_argument("--count", type=int, default=100)
     ap.add_argument("--max-tokens", type=int, default=32000)
@@ -180,6 +191,11 @@ def main():
     ap.add_argument("--base-url", default=None)
     ap.add_argument("--api-key", default=None)
     ap.add_argument("--extra-body", default=None, help='JSON passed as extra_body (e.g. {"reasoning_effort":"high"})')
+    # vllm_offline
+    ap.add_argument("--max-model-len", type=int, default=65536)
+    ap.add_argument("--gpu-mem", type=float, default=0.92, help="gpu_memory_utilization")
+    ap.add_argument("--tp", type=int, default=1, help="tensor parallel size")
+    ap.add_argument("--chat-template-kwargs", default=None, help='JSON, e.g. {"reasoning_effort":"high"} (gpt-oss) or {"enable_thinking":true}')
     # tinker
     ap.add_argument("--renderer", default=None, help="tinker_cookbook renderer name (default: recommended for model)")
     ap.add_argument("--samples-per-call", type=int, default=16)

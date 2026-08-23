@@ -26,7 +26,33 @@ def split_think_tags(text: str) -> tuple[str, str]:
     if "<think>" in text and "</think>" not in text:
         idx = text.index("<think>")
         return text[idx + len("<think>"):].strip(), text[:idx].strip()
+    # closing tag only: the chat template prefilled "<think>\n" so the generated text starts inside the block
+    if "</think>" in text and "<think>" not in text:
+        idx = text.index("</think>")
+        return text[:idx].strip(), text[idx + len("</think>"):].strip()
     return "", text
+
+
+def split_harmony(text: str) -> tuple[str, str]:
+    """gpt-oss harmony format (decode with skip_special_tokens=False):
+    ...<|channel|>analysis<|message|>REASONING<|end|><|start|>assistant<|channel|>final<|message|>ANSWER<|return|>"""
+    if not text:
+        return "", ""
+    reasoning, content = "", text
+    fin = "<|channel|>final<|message|>"
+    ana = "<|channel|>analysis<|message|>"
+    if fin in text:
+        head, content = text.split(fin, 1)
+    else:
+        head, content = text, ""
+    if ana in head:
+        reasoning = head.split(ana, 1)[1]
+    for tok in ("<|end|>", "<|start|>assistant", "<|return|>", "<|call|>"):
+        reasoning = reasoning.replace(tok, " ")
+        content = content.replace(tok, " ")
+    if not fin in text and not ana in text:
+        return split_think_tags(text)
+    return reasoning.strip(), content.strip()
 
 
 class Sampler(Protocol):

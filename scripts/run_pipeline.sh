@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
-# Full pipeline for ONE target model, sequentially. Run under nohup AFTER the vLLM server is started:
+# Full pipeline for ONE target model, sequentially, under nohup:
 #   nohup bash scripts/run_pipeline.sh Qwen/Qwen3.6-27B 100 > /workspace/logs/pipeline_qwen36.log 2>&1 &
+# Default SAMPLER=vllm_offline (in-process vLLM: no server needed). SAMPLER=vllm uses a running `vllm serve`.
 #
-# Steps: wait for vLLM -> 01 generate (baseline -> threshold -> above/below)
+# Steps: 01 generate (baseline -> threshold -> above/below)
 #        -> 02 paper judges (estimates + trajectories)  -> 02b Aditya fig/factor.json
 #        -> 00 summary (bias)  -> 05 E2  -> 03 mode judge (E1 labels)  -> 04 E1 analysis
-# Env knobs: COUNT (2nd arg, default 100), MAX_TOKENS (32000), CONCURRENCY (32), JUDGE_MODEL (claude-haiku-4-5),
+# Env knobs: COUNT (2nd arg, default 100), MAX_TOKENS (32000), CONCURRENCY (32, server mode), JUDGE_MODEL (claude-haiku-4-5),
+#            SAMPLER (vllm_offline|vllm), TP (tensor parallel, offline), MAX_MODEL_LEN (65536), GPU_MEM (0.92),
+#            CHAT_TEMPLATE_KWARGS (JSON, e.g. '{"reasoning_effort":"high"}' for gpt-oss),
 #            RUN_DIR (default data/runs/<slug>_<stamp>), SKIP_MODES=1 to stop before the E1 judge.
 set -euo pipefail
 MODEL=${1:-Qwen/Qwen3.6-27B}
@@ -13,6 +16,11 @@ COUNT=${2:-100}
 MAX_TOKENS=${MAX_TOKENS:-32000}
 CONCURRENCY=${CONCURRENCY:-32}
 JUDGE_MODEL=${JUDGE_MODEL:-claude-haiku-4-5}
+SAMPLER=${SAMPLER:-vllm_offline}
+TP=${TP:-1}
+MAX_MODEL_LEN=${MAX_MODEL_LEN:-65536}
+GPU_MEM=${GPU_MEM:-0.92}
+CHAT_TEMPLATE_KWARGS=${CHAT_TEMPLATE_KWARGS:-}
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -26,12 +34,21 @@ echo "=== pipeline for $MODEL -> $RUN_DIR   ($(date))"
 
 step() { echo; echo "=== [$(date +%H:%M:%S)] $*"; }
 
-step "0/7 waiting for vLLM"
-bash scripts/wait_for_vllm.sh
+if [ "$SAMPLER" = "vllm" ]; then
+  step "0/7 waiting for vLLM server"
+  bash scripts/wait_for_vllm.sh
+fi
 
-step "1/7 generate rollouts (count=$COUNT, max_tokens=$MAX_TOKENS)"
-python scripts/01_generate.py --sampler vllm --model "$MODEL" --count "$COUNT" --max-tokens "$MAX_TOKENS" \
-       --concurrency "$CONCURRENCY" --run-dir "$RUN_DIR" --judge-model "$JUDGE_MODEL"
+step "1/7 generate rollouts (sampler=$SAMPLER, count=$COUNT, max_tokens=$MAX_TOKENS)"
+EXTRA=()
+if [ "$SAMPLER" = "vllm_offline" ]; then
+  EXTRA+=(--tp "$TP" --max-model-len "$MAX_MODEL_LEN" --gpu-mem "$GPU_MEM")
+  [ -n "$CHAT_TEMPLATE_KWARGS" ] && EXTRA+=(--chat-template-kwargs "$CHAT_TEMPLATE_KWARGS")
+else
+  EXTRA+=(--concurrency "$CONCURRENCY")
+fi
+python scripts/01_generate.py --sampler "$SAMPLER" --model "$MODEL" --count "$COUNT" --max-tokens "$MAX_TOKENS" \
+       --run-dir "$RUN_DIR" --judge-model "$JUDGE_MODEL" "${EXTRA[@]}"
 
 step "2/7 paper judges (estimate judge on answers, trajectory judge on reasoning)"
 python scripts/02_judge_paper.py --run-dir "$RUN_DIR" --judge-model "$JUDGE_MODEL"

@@ -1,0 +1,85 @@
+"""In-process vLLM sampler (no server). Loads the model once, batches all n rollouts through
+`LLM.chat`, and splits reasoning from the answer by parsing the raw text:
+  - Qwen3 / 3.5 / 3.6 thinking models: <think>...</think>  (the template prefills "<think>\\n", so the
+    generated text usually starts inside the block and only contains the closing tag — handled)
+  - gpt-oss: harmony channels (decoded with skip_special_tokens=False)
+
+This is the simplest way to run one model end-to-end on a pod: one process, one log, no port.
+Use the server sampler (vllm_openai.py) instead when several processes need the model at once.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from forensics.samplers.base import split_harmony, split_think_tags
+
+
+class VLLMOfflineSampler:
+    name = "vllm_offline"
+
+    def __init__(
+        self,
+        model: str,
+        max_tokens: int = 32000,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        max_model_len: int = 65536,
+        gpu_memory_utilization: float = 0.92,
+        tensor_parallel_size: int = 1,
+        chat_template_kwargs: dict[str, Any] | None = None,
+        seed: int | None = None,
+        download_dir: str | None = None,
+    ):
+        from vllm import LLM  # heavy import; keep local
+
+        self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.top_p = top_p
+        self.chat_template_kwargs = chat_template_kwargs or {}
+        self.seed = seed
+        self.is_harmony = "gpt-oss" in model.lower()
+        kw = dict(model=model, max_model_len=max_model_len, gpu_memory_utilization=gpu_memory_utilization,
+                  tensor_parallel_size=tensor_parallel_size, trust_remote_code=True)
+        if download_dir:
+            kw["download_dir"] = download_dir
+        if seed is not None:
+            kw["seed"] = seed
+        self.llm = LLM(**kw)
+        self._cfg = dict(max_model_len=max_model_len, gpu_memory_utilization=gpu_memory_utilization,
+                         tensor_parallel_size=tensor_parallel_size)
+
+    def describe(self) -> dict:
+        return dict(sampler=self.name, model=self.model, max_tokens=self.max_tokens, temperature=self.temperature,
+                    top_p=self.top_p, chat_template_kwargs=self.chat_template_kwargs, seed=self.seed, **self._cfg)
+
+    async def sample(self, prompt: str, n: int, start_index: int = 0) -> list[dict]:
+        from vllm import SamplingParams
+
+        sp = SamplingParams(
+            n=1, max_tokens=self.max_tokens, temperature=self.temperature, top_p=self.top_p,
+            skip_special_tokens=not self.is_harmony,
+        )
+        messages = [[{"role": "user", "content": prompt}] for _ in range(n)]
+        kw = {}
+        if self.chat_template_kwargs:
+            kw["chat_template_kwargs"] = self.chat_template_kwargs
+        try:
+            outputs = self.llm.chat(messages, sampling_params=sp, use_tqdm=True, **kw)
+        except TypeError:
+            # older vLLM without chat_template_kwargs support
+            outputs = self.llm.chat(messages, sampling_params=sp, use_tqdm=True)
+        rows = []
+        for k, out in enumerate(outputs):
+            o = out.outputs[0]
+            text = o.text or ""
+            reasoning, content = split_harmony(text) if self.is_harmony else split_think_tags(text)
+            rows.append({
+                "i": start_index + k,
+                "reasoning": reasoning,
+                "content": content,
+                "finish_reason": o.finish_reason,
+                "usage": {"completion_tokens": len(o.token_ids), "prompt_tokens": len(out.prompt_token_ids or [])},
+            })
+        return rows

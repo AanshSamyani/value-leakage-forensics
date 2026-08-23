@@ -41,11 +41,13 @@ python scripts/00_summary.py
 
 # 1) scouting generation for a new model (writes baseline/threshold/above_good/below_good)
 #    Tinker (no server to manage; Qwen3.6-27B is listed as retiring from Tinker on Sept 2):
-python scripts/01_generate.py --sampler tinker --model Qwen/Qwen3.6-27B --count 100 --max-tokens 32000
-python scripts/01_generate.py --sampler tinker --model openai/gpt-oss-120b --renderer gpt_oss_high_reasoning --count 100 --max-tokens 32000
-#    vLLM on RunPod (one H100 80GB is enough for either model; start the server first, see below):
+#    in-process vLLM (default; no server):
+python scripts/01_generate.py --sampler vllm_offline --model Qwen/Qwen3.6-27B --count 100 --max-tokens 32000
+python scripts/01_generate.py --sampler vllm_offline --model openai/gpt-oss-120b --chat-template-kwargs '{"reasoning_effort":"high"}' --count 100
+#    vLLM server (start `scripts/serve_vllm.sh` first):
 python scripts/01_generate.py --sampler vllm --model Qwen/Qwen3.6-27B --count 100 --max-tokens 32000
-python scripts/01_generate.py --sampler vllm --model openai/gpt-oss-120b --extra-body '{"reasoning_effort":"high"}' --count 100
+#    Tinker:
+python scripts/01_generate.py --sampler tinker --model openai/gpt-oss-120b --renderer gpt_oss_high_reasoning --count 100 --max-tokens 32000
 
 # 2) paper judges (estimate judge on answers for ALL conditions; trajectory judge on reasoning)
 python scripts/02_judge_paper.py --run-dir qwen3.6-27b
@@ -68,7 +70,10 @@ Outputs land in `<run_dir>/analysis/e1/` and `<run_dir>/analysis/e2/` (CSVs, PNG
 All judge calls are cached per rollout under `<run_dir>/judge_cache/`; re-running is free.
 `01_generate.py` is resumable (re-run with `--run-dir <existing>` to fill missing/errored rollouts).
 
-## RunPod quickstart — one model, end to end, all under nohup (everything persists in /workspace)
+## RunPod quickstart — one model, end to end, under nohup (everything persists in /workspace)
+
+No model server needed: the pipeline loads the model in-process with vLLM (`--sampler vllm_offline`), samples all
+rollouts, then frees the GPU before the judge/analysis steps.
 
 ```bash
 # on the pod (1×H100 80GB / A100 80GB; /workspace volume ≥150 GB)
@@ -77,15 +82,16 @@ bash /workspace/value-leakage-forensics/scripts/runpod_setup.sh        # venv + 
 cd /workspace/value-leakage-forensics && cp .env.example .env && nano .env   # ANTHROPIC_API_KEY=...
 source /workspace/env.sh
 
-nohup bash scripts/serve_vllm.sh Qwen/Qwen3.6-27B > /workspace/logs/vllm.log 2>&1 &        # model server
-nohup bash scripts/run_pipeline.sh Qwen/Qwen3.6-27B 100 > /workspace/logs/pipeline_qwen36.log 2>&1 &   # waits for server, then runs everything
+nohup bash scripts/run_pipeline.sh Qwen/Qwen3.6-27B 100 > /workspace/logs/pipeline_qwen36.log 2>&1 &
 tail -f /workspace/logs/pipeline_qwen36.log
 ```
 `run_pipeline.sh` = generate (baseline → threshold → above/below) → paper judges → Aditya's fig/factor.json →
 summary (bias) → E2 → E1 mode judge → E1 analysis, writing to `data/runs/<model>_<stamp>/`.
 Each step is idempotent/resumable; to rerun from a step, call that script with `--run-dir <run dir>`.
 If the pod is recreated from the image, `/workspace` survives: `source /workspace/env.sh` and continue.
-Aditya's 10 runs are not needed for this path (`FETCH_ADITYA=1 bash scripts/runpod_setup.sh` pulls them if you want `00_summary --all` / `05_analyze_e2 --all`).
+Server mode is still available (`SAMPLER=vllm`, with `nohup bash scripts/serve_vllm.sh <model> > /workspace/logs/vllm.log 2>&1 &`
+started first) — useful later when several processes need the model (resampling).
+Aditya's 10 runs are not needed for this path (`FETCH_ADITYA=1 bash scripts/runpod_setup.sh` pulls them if you want `00_summary --all`).
 
 ## vLLM on RunPod (reference commands)
 

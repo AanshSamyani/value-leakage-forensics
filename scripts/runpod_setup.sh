@@ -53,5 +53,5 @@ echo
 echo "Setup done. Next:"
 echo "  1) create $REPO_DIR/.env with ANTHROPIC_API_KEY=...   (cp .env.example .env)"
 echo "  2) source /workspace/env.sh   (or open a new shell)"
-echo "  3) nohup bash scripts/serve_vllm.sh Qwen/Qwen3.6-27B > /workspace/logs/vllm.log 2>&1 &"
-echo "  4) nohup bash scripts/run_pipeline.sh Qwen/Qwen3.6-27B 100 > /workspace/logs/pipeline_qwen36.log 2>&1 &"
+echo "  3) nohup bash scripts/run_pipeline.sh Qwen/Qwen3.6-27B 100 > /workspace/logs/pipeline_qwen36.log 2>&1 &"
+echo "     (no server needed: the pipeline loads the model in-process; SAMPLER=vllm uses scripts/serve_vllm.sh instead)"
