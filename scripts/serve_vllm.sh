@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# Start a vLLM OpenAI-compatible server for a thinking model. Run inside tmux.
-#   bash scripts/serve_vllm.sh Qwen/Qwen3.6-27B
-#   bash scripts/serve_vllm.sh openai/gpt-oss-120b
-#   bash scripts/serve_vllm.sh Qwen/Qwen3.5-122B-A10B 4        # tensor-parallel size as 2nd arg
+# Start a vLLM OpenAI-compatible server for a thinking model. Meant to be run under nohup:
+#   nohup bash scripts/serve_vllm.sh Qwen/Qwen3.6-27B > /workspace/logs/vllm.log 2>&1 &
+#   nohup bash scripts/serve_vllm.sh openai/gpt-oss-120b > /workspace/logs/vllm.log 2>&1 &
+#   nohup bash scripts/serve_vllm.sh Qwen/Qwen3.5-122B-A10B 4 > /workspace/logs/vllm.log 2>&1 &   # 2nd arg = tensor parallel
 set -euo pipefail
 MODEL=${1:-Qwen/Qwen3.6-27B}
 TP=${2:-1}
 PORT=${PORT:-8000}
 MAXLEN=${MAXLEN:-65536}
+MAXSEQS=${MAXSEQS:-64}
 export HF_HOME=${HF_HOME:-/workspace/hf}
 
 case "$MODEL" in
-  *gpt-oss*)   PARSER=openai_gptoss ;;
+  *gpt-oss*)   PARSER=${PARSER:-openai_gptoss} ;;
   *)           PARSER=${PARSER:-qwen3} ;;      # Qwen3 / 3.5 / 3.6 thinking models
 esac
 
-mkdir -p /workspace/logs
-echo "serving $MODEL  tp=$TP  parser=$PARSER  port=$PORT  max-len=$MAXLEN  (log: /workspace/logs/vllm.log)"
+echo "serving $MODEL  tp=$TP  parser=$PARSER  port=$PORT  max-len=$MAXLEN  max-seqs=$MAXSEQS"
 exec vllm serve "$MODEL" \
   --tensor-parallel-size "$TP" \
   --reasoning-parser "$PARSER" \
   --max-model-len "$MAXLEN" \
   --gpu-memory-utilization 0.92 \
-  --max-num-seqs ${MAXSEQS:-64} \
+  --max-num-seqs "$MAXSEQS" \
   --port "$PORT" \
-  --served-model-name "$MODEL" 2>&1 | tee -a /workspace/logs/vllm.log
+  --served-model-name "$MODEL"

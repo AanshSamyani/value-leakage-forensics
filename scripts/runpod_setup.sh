@@ -30,8 +30,9 @@ pip install -e "$REPO_DIR"                 # anthropic, openai, numpy, pandas, s
 pip install -U vllm                        # pulls its own torch; ~10 min the first time
 pip install -U "huggingface_hub[cli]"
 
-# 3) data: Aditya's 10 runs
-bash "$REPO_DIR/scripts/fetch_aditya_runs.sh"
+# 3) data: Aditya's 10 runs (optional; FETCH_ADITYA=1 to include)
+if [ "${FETCH_ADITYA:-0}" = "1" ]; then bash "$REPO_DIR/scripts/fetch_aditya_runs.sh"; fi
+mkdir -p "$REPO_DIR/data/runs" /workspace/logs
 
 # 4) persistent env vars for every new shell
 BASHRC_SNIPPET='# --- value-leakage-forensics ---
@@ -52,4 +53,5 @@ echo
 echo "Setup done. Next:"
 echo "  1) create $REPO_DIR/.env with ANTHROPIC_API_KEY=...   (cp .env.example .env)"
 echo "  2) source /workspace/env.sh   (or open a new shell)"
-echo "  3) bash scripts/serve_vllm.sh Qwen/Qwen3.6-27B      (in a tmux window)"
+echo "  3) nohup bash scripts/serve_vllm.sh Qwen/Qwen3.6-27B > /workspace/logs/vllm.log 2>&1 &"
+echo "  4) nohup bash scripts/run_pipeline.sh Qwen/Qwen3.6-27B 100 > /workspace/logs/pipeline_qwen36.log 2>&1 &"

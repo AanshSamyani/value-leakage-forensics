@@ -16,7 +16,8 @@ What is here:
 | `forensics/judges/` | Claude judge runner with disk cache; the paper's estimate/trajectory judge prompts (verbatim); the E1 mode judge |
 | `forensics/analysis/e1_modes.py` | E1: engagement modes → prevalence, per-mode bias, crossing asymmetry, covertness |
 | `forensics/analysis/e2_dynamics.py` | E2: T1 start shift, T2 length interaction, T3 transitions + stopping hazard |
-| `scripts/` | CLIs (run in order below) |
+| `forensics/analysis/trajectory_plot.py` | Aditya's trajectory figure + `factor.json` (MRF), ported |
+| `scripts/` | CLIs (run in order below); `run_pipeline.sh` chains them; `serve_vllm.sh` / `wait_for_vllm.sh`; `runpod_setup.sh` |
 
 ## Setup (on the server)
 
@@ -50,6 +51,9 @@ python scripts/01_generate.py --sampler vllm --model openai/gpt-oss-120b --extra
 python scripts/02_judge_paper.py --run-dir qwen3.6-27b
 python scripts/02_judge_paper.py --run-dir qwen3.5-122b-a10b --kinds estimates    # Aditya's runs only have baseline finals
 
+# 2b) Aditya's per-run artefacts (fig.png, fig_split.png, factor.json)
+python scripts/02b_plot_run.py --run-dir qwen3.6-27b
+
 # 3) E2 (free; trajectories only)
 python scripts/05_analyze_e2.py --run-dir qwen3.6-27b        # or --all
 
@@ -64,20 +68,24 @@ Outputs land in `<run_dir>/analysis/e1/` and `<run_dir>/analysis/e2/` (CSVs, PNG
 All judge calls are cached per rollout under `<run_dir>/judge_cache/`; re-running is free.
 `01_generate.py` is resumable (re-run with `--run-dir <existing>` to fill missing/errored rollouts).
 
-## RunPod quickstart (everything persists under /workspace)
+## RunPod quickstart — one model, end to end, all under nohup (everything persists in /workspace)
 
 ```bash
-# on the pod (1×H100 80GB or A100 80GB is enough for Qwen3.6-27B / gpt-oss-120b)
+# on the pod (1×H100 80GB / A100 80GB; /workspace volume ≥150 GB)
 cd /workspace && git clone https://github.com/AanshSamyani/value-leakage-forensics.git
-bash /workspace/value-leakage-forensics/scripts/runpod_setup.sh   # venv, vllm, data -> /workspace; env snippet -> ~/.bashrc + /workspace/env.sh
-cd /workspace/value-leakage-forensics && cp .env.example .env && nano .env     # ANTHROPIC_API_KEY
+bash /workspace/value-leakage-forensics/scripts/runpod_setup.sh        # venv + vllm + package -> /workspace; env -> ~/.bashrc + /workspace/env.sh
+cd /workspace/value-leakage-forensics && cp .env.example .env && nano .env   # ANTHROPIC_API_KEY=...
 source /workspace/env.sh
-tmux new -s vllm   ->   bash scripts/serve_vllm.sh Qwen/Qwen3.6-27B       # wait for "Uvicorn running"; Ctrl-b d to detach
-curl -s localhost:8000/v1/models | head -c 300                            # sanity check
-tmux new -s gen    ->   python scripts/01_generate.py --sampler vllm --model Qwen/Qwen3.6-27B --count 100 --max-tokens 32000
+
+nohup bash scripts/serve_vllm.sh Qwen/Qwen3.6-27B > /workspace/logs/vllm.log 2>&1 &        # model server
+nohup bash scripts/run_pipeline.sh Qwen/Qwen3.6-27B 100 > /workspace/logs/pipeline_qwen36.log 2>&1 &   # waits for server, then runs everything
+tail -f /workspace/logs/pipeline_qwen36.log
 ```
-If the pod is recreated from the image, `/workspace` survives: just `source /workspace/env.sh` (and re-run
-`runpod_setup.sh` if system packages are missing — it is idempotent).
+`run_pipeline.sh` = generate (baseline → threshold → above/below) → paper judges → Aditya's fig/factor.json →
+summary (bias) → E2 → E1 mode judge → E1 analysis, writing to `data/runs/<model>_<stamp>/`.
+Each step is idempotent/resumable; to rerun from a step, call that script with `--run-dir <run dir>`.
+If the pod is recreated from the image, `/workspace` survives: `source /workspace/env.sh` and continue.
+Aditya's 10 runs are not needed for this path (`FETCH_ADITYA=1 bash scripts/runpod_setup.sh` pulls them if you want `00_summary --all` / `05_analyze_e2 --all`).
 
 ## vLLM on RunPod (reference commands)
 
