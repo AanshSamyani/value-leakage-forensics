@@ -58,7 +58,7 @@ def make_sampler(args):
         return VLLMOfflineSampler(model=args.model, max_tokens=args.max_tokens, temperature=args.temperature,
                                   top_p=args.top_p, max_model_len=args.max_model_len,
                                   gpu_memory_utilization=args.gpu_mem, tensor_parallel_size=args.tp,
-                                  chat_template_kwargs=ctk, seed=args.seed)
+                                  chat_template_kwargs=ctk, seed=args.seed, max_num_seqs=args.max_num_seqs)
     if args.sampler == "tinker":
         from forensics.samplers.tinker_sampler import TinkerSampler
         return TinkerSampler(base_model=args.model, renderer_name=args.renderer, max_tokens=args.max_tokens,
@@ -194,6 +194,7 @@ def main():
     # vllm_offline
     ap.add_argument("--max-model-len", type=int, default=65536)
     ap.add_argument("--gpu-mem", type=float, default=0.92, help="gpu_memory_utilization")
+    ap.add_argument("--max-num-seqs", type=int, default=128, help="vLLM max concurrent sequences (Qwen3.5/3.6 hybrid models need <= Mamba cache blocks)")
     ap.add_argument("--tp", type=int, default=1, help="tensor parallel size")
     ap.add_argument("--chat-template-kwargs", default=None, help='JSON, e.g. {"reasoning_effort":"high"} (gpt-oss) or {"enable_thinking":true}')
     # tinker

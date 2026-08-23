@@ -7,7 +7,7 @@
 #        -> 02 paper judges (estimates + trajectories)  -> 02b Aditya fig/factor.json
 #        -> 00 summary (bias)  -> 05 E2  -> 03 mode judge (E1 labels)  -> 04 E1 analysis
 # Env knobs: COUNT (2nd arg, default 100), MAX_TOKENS (32000), CONCURRENCY (32, server mode), JUDGE_MODEL (claude-haiku-4-5),
-#            SAMPLER (vllm_offline|vllm), TP (tensor parallel, offline), MAX_MODEL_LEN (65536), GPU_MEM (0.92),
+#            SAMPLER (vllm_offline|vllm), TP (tensor parallel, offline), MAX_MODEL_LEN (65536), GPU_MEM (0.92), MAX_NUM_SEQS (128),
 #            CHAT_TEMPLATE_KWARGS (JSON, e.g. '{"reasoning_effort":"high"}' for gpt-oss),
 #            RUN_DIR (default data/runs/<slug>_<stamp>), SKIP_MODES=1 to stop before the E1 judge.
 set -euo pipefail
@@ -20,6 +20,7 @@ SAMPLER=${SAMPLER:-vllm_offline}
 TP=${TP:-1}
 MAX_MODEL_LEN=${MAX_MODEL_LEN:-65536}
 GPU_MEM=${GPU_MEM:-0.92}
+MAX_NUM_SEQS=${MAX_NUM_SEQS:-128}
 CHAT_TEMPLATE_KWARGS=${CHAT_TEMPLATE_KWARGS:-}
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -42,7 +43,7 @@ fi
 step "1/7 generate rollouts (sampler=$SAMPLER, count=$COUNT, max_tokens=$MAX_TOKENS)"
 EXTRA=()
 if [ "$SAMPLER" = "vllm_offline" ]; then
-  EXTRA+=(--tp "$TP" --max-model-len "$MAX_MODEL_LEN" --gpu-mem "$GPU_MEM")
+  EXTRA+=(--tp "$TP" --max-model-len "$MAX_MODEL_LEN" --gpu-mem "$GPU_MEM" --max-num-seqs "$MAX_NUM_SEQS")
   [ -n "$CHAT_TEMPLATE_KWARGS" ] && EXTRA+=(--chat-template-kwargs "$CHAT_TEMPLATE_KWARGS")
 else
   EXTRA+=(--concurrency "$CONCURRENCY")

@@ -30,6 +30,7 @@ class VLLMOfflineSampler:
         chat_template_kwargs: dict[str, Any] | None = None,
         seed: int | None = None,
         download_dir: str | None = None,
+        max_num_seqs: int = 128,
     ):
         from vllm import LLM  # heavy import; keep local
 
@@ -40,15 +41,18 @@ class VLLMOfflineSampler:
         self.chat_template_kwargs = chat_template_kwargs or {}
         self.seed = seed
         self.is_harmony = "gpt-oss" in model.lower()
+        # max_num_seqs: hybrid Mamba/GDN models (Qwen3.5/3.6) allocate one Mamba cache block per decode
+        # sequence; vLLM's default 1024 exceeds the blocks available on one 80GB card and aborts CUDA-graph
+        # capture ("max_num_seqs (1024) exceeds available Mamba cache blocks"). 128 is plenty for our batches.
         kw = dict(model=model, max_model_len=max_model_len, gpu_memory_utilization=gpu_memory_utilization,
-                  tensor_parallel_size=tensor_parallel_size, trust_remote_code=True)
+                  tensor_parallel_size=tensor_parallel_size, trust_remote_code=True, max_num_seqs=max_num_seqs)
         if download_dir:
             kw["download_dir"] = download_dir
         if seed is not None:
             kw["seed"] = seed
         self.llm = LLM(**kw)
         self._cfg = dict(max_model_len=max_model_len, gpu_memory_utilization=gpu_memory_utilization,
-                         tensor_parallel_size=tensor_parallel_size)
+                         tensor_parallel_size=tensor_parallel_size, max_num_seqs=max_num_seqs)
 
     def describe(self) -> dict:
         return dict(sampler=self.name, model=self.model, max_tokens=self.max_tokens, temperature=self.temperature,

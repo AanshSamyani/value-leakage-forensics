@@ -8,7 +8,7 @@ MODEL=${1:-Qwen/Qwen3.6-27B}
 TP=${2:-1}
 PORT=${PORT:-8000}
 MAXLEN=${MAXLEN:-65536}
-MAXSEQS=${MAXSEQS:-64}
+MAXSEQS=${MAXSEQS:-128}   # Qwen3.5/3.6 hybrid models: must be <= available Mamba cache blocks (~330 on 80GB)
 export HF_HOME=${HF_HOME:-/workspace/hf}
 
 case "$MODEL" in
