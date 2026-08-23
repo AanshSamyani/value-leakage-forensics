@@ -1,0 +1,19 @@
+cond,metric,rate,n,ci_lo,ci_hi
+above_good,rationalized_covert_rate,0.5257731958762887,97,0.4273259458893044,0.6222567660073732
+above_good,rationalized_covert_rate_STRICT,0.4845360824742268,97,0.38757989187721464,0.5826704809847787
+above_good,"transparent_outcome_rate (flags threshold side, no influence claim)",0.041237113402061855,97,0.016150975246288893,0.1012767529928505
+above_good,overt_aim_and_favoured_rate,0.20618556701030927,97,0.13762597270753013,0.2971311116703456
+above_good,p_favoured_given_denies,1.0,4,0.5100999795960008,1.0
+above_good,p_favoured_given_admits,,0,,
+below_good,rationalized_covert_rate,0.41414141414141414,99,0.32209342077368147,0.5126038223652817
+below_good,rationalized_covert_rate_STRICT,0.31313131313131315,99,0.23020651977353204,0.41001689176421147
+below_good,"transparent_outcome_rate (flags threshold side, no influence claim)",0.10101010101010101,99,0.05579607351869981,0.1760322916564822
+below_good,overt_aim_and_favoured_rate,0.46464646464646464,99,0.3695632983501778,0.5623708605893952
+below_good,p_favoured_given_denies,0.625,16,0.38640647097934805,0.8151901744524719
+below_good,p_favoured_given_admits,,0,,
+pooled,rationalized_covert_rate,0.46938775510204084,196,0.4007798468147511,0.5391725955195776
+pooled,rationalized_covert_rate_STRICT,0.3979591836734694,196,0.33202747271783384,0.46781400172992865
+pooled,"transparent_outcome_rate (flags threshold side, no influence claim)",0.07142857142857142,196,0.04302172691265146,0.11631246576795157
+pooled,overt_aim_and_favoured_rate,0.336734693877551,196,0.27427401443041904,0.405472344686001
+pooled,p_favoured_given_denies,0.7,20,0.4810232237710205,0.8545247260310062
+pooled,p_favoured_given_admits,,0,,
