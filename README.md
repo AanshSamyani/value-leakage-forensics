@@ -91,7 +91,17 @@ Each step is idempotent/resumable; to rerun from a step, call that script with `
 If the pod is recreated from the image, `/workspace` survives: `source /workspace/env.sh` and continue.
 Server mode is still available (`SAMPLER=vllm`, with `nohup bash scripts/serve_vllm.sh <model> > /workspace/logs/vllm.log 2>&1 &`
 started first) — useful later when several processes need the model (resampling).
-Aditya's 10 runs are not needed for this path (`FETCH_ADITYA=1 bash scripts/runpod_setup.sh` pulls them if you want `00_summary --all`).
+To run the judges + E2 + E1 on one of **Aditya's existing runs** (no GPU), fetch his data and skip generation:
+```bash
+bash scripts/fetch_aditya_runs.sh
+SKIP_GENERATE=1 RUN_DIR=$PWD/data/runs/qwen3.5-122b-a10b_20260815_030702 \
+  nohup bash scripts/run_pipeline.sh Qwen/Qwen3.5-122B-A10B > /workspace/logs/pipeline_q35_122b_aditya.log 2>&1 &
+```
+To generate fresh Qwen3.5-122B-A10B rollouts on ONE H100 80GB use the official 4-bit checkpoint (bf16 needs 4×H100, FP8 2×H100):
+```bash
+MAX_MODEL_LEN=40960 MAX_NUM_SEQS=64 GPU_MEM=0.95 \
+  nohup bash scripts/run_pipeline.sh Qwen/Qwen3.5-122B-A10B-GPTQ-Int4 100 > /workspace/logs/pipeline_q35_122b.log 2>&1 &
+```
 
 ## vLLM on RunPod (reference commands)
 

@@ -9,7 +9,8 @@
 # Env knobs: COUNT (2nd arg, default 100), MAX_TOKENS (32000), CONCURRENCY (32, server mode), JUDGE_MODEL (claude-haiku-4-5),
 #            SAMPLER (vllm_offline|vllm), TP (tensor parallel, offline), MAX_MODEL_LEN (65536), GPU_MEM (0.92), MAX_NUM_SEQS (128),
 #            CHAT_TEMPLATE_KWARGS (JSON, e.g. '{"reasoning_effort":"high"}' for gpt-oss),
-#            RUN_DIR (default data/runs/<slug>_<stamp>), SKIP_MODES=1 to stop before the E1 judge.
+#            RUN_DIR (default data/runs/<slug>_<stamp>), SKIP_MODES=1 to stop before the E1 judge,
+#            SKIP_GENERATE=1 to run steps 2-7 on an existing RUN_DIR (e.g. one of Aditya's runs).
 set -euo pipefail
 MODEL=${1:-Qwen/Qwen3.6-27B}
 COUNT=${2:-100}
@@ -35,21 +36,25 @@ echo "=== pipeline for $MODEL -> $RUN_DIR   ($(date))"
 
 step() { echo; echo "=== [$(date +%H:%M:%S)] $*"; }
 
-if [ "$SAMPLER" = "vllm" ]; then
-  step "0/7 waiting for vLLM server"
-  bash scripts/wait_for_vllm.sh
-fi
-
-step "1/7 generate rollouts (sampler=$SAMPLER, count=$COUNT, max_tokens=$MAX_TOKENS)"
-EXTRA=()
-if [ "$SAMPLER" = "vllm_offline" ]; then
-  EXTRA+=(--tp "$TP" --max-model-len "$MAX_MODEL_LEN" --gpu-mem "$GPU_MEM" --max-num-seqs "$MAX_NUM_SEQS")
-  [ -n "$CHAT_TEMPLATE_KWARGS" ] && EXTRA+=(--chat-template-kwargs "$CHAT_TEMPLATE_KWARGS")
+if [ "${SKIP_GENERATE:-0}" = "1" ]; then
+  step "1/7 generation SKIPPED (SKIP_GENERATE=1) — using existing rollouts in $RUN_DIR"
+  [ -f "$RUN_DIR/above_good.json" ] || { echo "no above_good.json in $RUN_DIR"; exit 1; }
 else
-  EXTRA+=(--concurrency "$CONCURRENCY")
+  if [ "$SAMPLER" = "vllm" ]; then
+    step "0/7 waiting for vLLM server"
+    bash scripts/wait_for_vllm.sh
+  fi
+  step "1/7 generate rollouts (sampler=$SAMPLER, count=$COUNT, max_tokens=$MAX_TOKENS)"
+  EXTRA=()
+  if [ "$SAMPLER" = "vllm_offline" ]; then
+    EXTRA+=(--tp "$TP" --max-model-len "$MAX_MODEL_LEN" --gpu-mem "$GPU_MEM" --max-num-seqs "$MAX_NUM_SEQS")
+    [ -n "$CHAT_TEMPLATE_KWARGS" ] && EXTRA+=(--chat-template-kwargs "$CHAT_TEMPLATE_KWARGS")
+  else
+    EXTRA+=(--concurrency "$CONCURRENCY")
+  fi
+  python scripts/01_generate.py --sampler "$SAMPLER" --model "$MODEL" --count "$COUNT" --max-tokens "$MAX_TOKENS" \
+         --run-dir "$RUN_DIR" --judge-model "$JUDGE_MODEL" "${EXTRA[@]}"
 fi
-python scripts/01_generate.py --sampler "$SAMPLER" --model "$MODEL" --count "$COUNT" --max-tokens "$MAX_TOKENS" \
-       --run-dir "$RUN_DIR" --judge-model "$JUDGE_MODEL" "${EXTRA[@]}"
 
 step "2/7 paper judges (estimate judge on answers, trajectory judge on reasoning)"
 python scripts/02_judge_paper.py --run-dir "$RUN_DIR" --judge-model "$JUDGE_MODEL"
