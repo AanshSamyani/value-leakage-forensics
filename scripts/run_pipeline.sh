@@ -25,6 +25,9 @@ MAX_NUM_SEQS=${MAX_NUM_SEQS:-128}
 CHAT_TEMPLATE_KWARGS=${CHAT_TEMPLATE_KWARGS:-}
 
 export VLLM_WORKER_MULTIPROC_METHOD=spawn   # avoid fork-with-CUDA crash in vLLM EngineCore
+# Some pod images ship a minimal CUDA toolkit without curand.h; FlashInfer's sampling JIT then fails
+# at engine warmup. The torch-native sampler needs no compilation and is fast enough for our batches.
+export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 set -a; [ -f .env ] && source .env; set +a

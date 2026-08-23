@@ -4,6 +4,7 @@
 #   nohup bash scripts/serve_vllm.sh openai/gpt-oss-120b > /workspace/logs/vllm.log 2>&1 &
 #   nohup bash scripts/serve_vllm.sh Qwen/Qwen3.5-122B-A10B 4 > /workspace/logs/vllm.log 2>&1 &   # 2nd arg = tensor parallel
 set -euo pipefail
+export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}   # minimal toolkits lack curand.h -> FlashInfer sampling JIT fails
 MODEL=${1:-Qwen/Qwen3.6-27B}
 TP=${2:-1}
 PORT=${PORT:-8000}
