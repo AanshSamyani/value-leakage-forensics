@@ -247,6 +247,11 @@ def t3_hazard(steps: pd.DataFrame) -> pd.DataFrame:
 # Figures + driver
 # ---------------------------------------------------------------------------
 
+def _yerr(p, lo, hi):
+    p = np.asarray(p, dtype=float); lo = np.asarray(lo, dtype=float); hi = np.asarray(hi, dtype=float)
+    return [np.nan_to_num(np.clip(p - lo, 0, None), nan=0.0), np.nan_to_num(np.clip(hi - p, 0, None), nan=0.0)]
+
+
 def _fig_t2(t2: pd.DataFrame, col: str, out: Path, title: str):
     import matplotlib
     matplotlib.use("Agg")
@@ -284,8 +289,8 @@ def _fig_t3(trans: pd.DataFrame, haz: pd.DataFrame, out: Path, title: str):
     w = 0.38
     tg = trans[trans.metric.str.startswith("P(toward_good")].set_index("group").reindex(groups)
     tb = trans[trans.metric.str.startswith("P(toward_bad")].set_index("group").reindex(groups)
-    ax.bar(x - w / 2, tg.p, w, yerr=[tg.p - tg.ci_lo, tg.ci_hi - tg.p], capsize=3, label="P(move toward good | on bad side)")
-    ax.bar(x + w / 2, tb.p, w, yerr=[tb.p - tb.ci_lo, tb.ci_hi - tb.p], capsize=3, label="P(move toward bad | on good side)")
+    ax.bar(x - w / 2, tg.p, w, yerr=_yerr(tg.p, tg.ci_lo, tg.ci_hi), capsize=3, label="P(move toward good | on bad side)")
+    ax.bar(x + w / 2, tb.p, w, yerr=_yerr(tb.p, tb.ci_lo, tb.ci_hi), capsize=3, label="P(move toward bad | on good side)")
     ax.set_xticks(x)
     ax.set_xticklabels(groups, rotation=20, ha="right", fontsize=8)
     ax.set_ylim(0, 1)
@@ -295,8 +300,8 @@ def _fig_t3(trans: pd.DataFrame, haz: pd.DataFrame, out: Path, title: str):
     hz = haz[haz.metric == "hazard P(stop | side)"]
     hg = hz[hz.side == "good"].set_index("group").reindex(groups)
     hb = hz[hz.side == "bad"].set_index("group").reindex(groups)
-    ax.bar(x - w / 2, hg.p, w, yerr=[hg.p - hg.ci_lo, hg.ci_hi - hg.p], capsize=3, label="hazard | on good side")
-    ax.bar(x + w / 2, hb.p, w, yerr=[hb.p - hb.ci_lo, hb.ci_hi - hb.p], capsize=3, label="hazard | on bad side")
+    ax.bar(x - w / 2, hg.p, w, yerr=_yerr(hg.p, hg.ci_lo, hg.ci_hi), capsize=3, label="hazard | on good side")
+    ax.bar(x + w / 2, hb.p, w, yerr=_yerr(hb.p, hb.ci_lo, hb.ci_hi), capsize=3, label="hazard | on bad side")
     ax.set_xticks(x)
     ax.set_xticklabels(groups, rotation=20, ha="right", fontsize=8)
     top = np.nanmax(np.concatenate([hg.ci_hi.to_numpy(float), hb.ci_hi.to_numpy(float)]))

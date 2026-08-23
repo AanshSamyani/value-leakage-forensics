@@ -252,6 +252,14 @@ def revisions_table(df: pd.DataFrame) -> pd.DataFrame:
 # Figures + driver
 # ---------------------------------------------------------------------------
 
+def _yerr(p, lo, hi):
+    """Non-negative, NaN-free error-bar arrays from point estimates and CI bounds."""
+    p = np.asarray(p, dtype=float); lo = np.asarray(lo, dtype=float); hi = np.asarray(hi, dtype=float)
+    low = np.nan_to_num(np.clip(p - lo, 0, None), nan=0.0)
+    up = np.nan_to_num(np.clip(hi - p, 0, None), nan=0.0)
+    return [low, up]
+
+
 def _fig_prevalence(prev: pd.DataFrame, out: Path, title: str):
     import matplotlib
     matplotlib.use("Agg")
@@ -264,8 +272,8 @@ def _fig_prevalence(prev: pd.DataFrame, out: Path, title: str):
     w = 0.38
     for j, cond in enumerate(["above_good", "below_good"]):
         sub = prev[(prev.cond == cond)].set_index("mode").reindex(keys)
-        ax.bar(x + (j - 0.5) * w, sub.rate, w, label=cond,
-               yerr=[sub.rate - sub.ci_lo, sub.ci_hi - sub.rate], capsize=3)
+        ax.bar(x + (j - 0.5) * w, np.nan_to_num(sub.rate.to_numpy(float), nan=0.0), w, label=cond,
+               yerr=_yerr(sub.rate, sub.ci_lo, sub.ci_hi), capsize=3)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=25, ha="right", fontsize=8)
     ax.set_ylim(0, 1)
@@ -287,8 +295,8 @@ def _fig_per_mode_bias(pmb: pd.DataFrame, out: Path, title: str):
     fig, ax = plt.subplots(figsize=(9, 5))
     y = np.arange(len(rows))
     err = np.array([[r["diff"] - r.diff_ci[0], r.diff_ci[1] - r["diff"]] for _, r in rows.iterrows()]).T
-    err = np.nan_to_num(err, nan=0.0)
-    ax.barh(y, rows["diff"], xerr=err, capsize=3)
+    err = np.nan_to_num(np.clip(err, 0, None), nan=0.0)
+    ax.barh(y, np.nan_to_num(rows["diff"].to_numpy(float), nan=0.0), xerr=err, capsize=3)
     ax.set_yticks(y)
     ax.set_yticklabels(rows.name, fontsize=8)
     ax.axvline(0, color="k", lw=0.8)

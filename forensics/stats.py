@@ -16,7 +16,11 @@ def wilson_ci(k: int, n: int, z: float = 1.96) -> tuple[float, float]:
     den = 1 + z * z / n
     centre = p + z * z / (2 * n)
     half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
-    return ((centre - half) / den, (centre + half) / den)
+    lo, hi = (centre - half) / den, (centre + half) / den
+    # floating error can put p just outside [lo, hi] when k == 0 or k == n; clamp so error bars are never negative
+    lo = max(0.0, min(lo, p))
+    hi = min(1.0, max(hi, p))
+    return (lo, hi)
 
 
 def bootstrap_ci(
