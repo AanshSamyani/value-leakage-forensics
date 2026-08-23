@@ -25,10 +25,19 @@ if [ ! -x "$VENV/bin/python" ]; then
   python3 -m venv "$VENV"
 fi
 source "$VENV/bin/activate"
-python -m pip install -U pip wheel
+python -m pip install -U pip wheel uv
 pip install -e "$REPO_DIR"                 # anthropic, openai, numpy, pandas, scipy, matplotlib, tqdm, dotenv
-pip install -U vllm                        # pulls its own torch; ~10 min the first time
+# vLLM + torch matched to THIS pod's NVIDIA driver (avoids "driver too old" when /workspace
+# outlives the pod and the next host has a different CUDA version):
+uv pip install -U --torch-backend=auto vllm
 pip install -U "huggingface_hub[cli]"
+python - <<'PYCHECK'
+import torch
+ok = torch.cuda.is_available()
+print(f"torch {torch.__version__} (cuda {torch.version.cuda}) — cuda available: {ok}")
+if not ok:
+    raise SystemExit("torch cannot see the GPU: driver/build mismatch — rerun this script or pick a pod with a newer CUDA driver")
+PYCHECK
 
 # 3) data: Aditya's 10 runs (optional; FETCH_ADITYA=1 to include)
 if [ "${FETCH_ADITYA:-0}" = "1" ]; then bash "$REPO_DIR/scripts/fetch_aditya_runs.sh"; fi
