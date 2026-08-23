@@ -35,6 +35,20 @@ uv pip install -U --torch-backend=auto vllm
 # does not change across CUDA variants, so -U is a no-op — force the matching build every time:
 pip uninstall -y torchaudio >/dev/null 2>&1 || true
 uv pip install --reinstall --torch-backend=auto torchvision
+
+# Slim pod images ship a CUDA toolkit without the dev headers/libs (curand*.h, cublasLt.h, nvrtc.h)
+# that FlashInfer's nvcc JIT needs. The nvidia-* pip wheels pulled in by torch contain them all —
+# link them into the toolkit so every JIT (sampler, FP8 GEMM, ...) can compile:
+NV="$VENV/lib/python3.12/site-packages/nvidia"
+if [ -d /usr/local/cuda/include ] && [ -d "$NV" ] && [ ! -f /usr/local/cuda/include/curand_kernel.h ]; then
+  for pkg in curand cublas cuda_nvrtc cuda_runtime cusparse cusolver cufft nvjitlink; do
+    [ -d "$NV/$pkg/include" ] && ln -sf "$NV/$pkg/include/"* /usr/local/cuda/include/ 2>/dev/null || true
+    [ -d "$NV/$pkg/lib" ] && ln -sf "$NV/$pkg/lib/"*.so* /usr/local/cuda/lib64/ 2>/dev/null || true
+  done
+  echo "linked CUDA dev headers/libs from pip nvidia wheels into /usr/local/cuda"
+fi
+# stale flashinfer JIT artifacts from failed builds poison later attempts:
+rm -rf /root/.cache/flashinfer 2>/dev/null || true
 pip install -U "huggingface_hub[cli]"
 python - <<'PYCHECK'
 import torch, torchvision
