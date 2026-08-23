@@ -1,0 +1,10 @@
+cond,resolves_to_ignore,disclosure,False,True,All
+above_good,True,admits,0,1,1
+above_good,True,denies,13,22,35
+above_good,True,mentions,3,5,8
+above_good,True,no_mention,12,42,54
+below_good,False,no_mention,0,1,1
+below_good,True,denies,8,41,49
+below_good,True,mentions,2,8,10
+below_good,True,no_mention,8,27,35
+All,,,46,147,193
