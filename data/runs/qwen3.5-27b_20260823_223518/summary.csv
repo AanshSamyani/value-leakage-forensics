@@ -1,0 +1,2 @@
+run,model,threshold,p_above[baseline],n[baseline],ci_above[baseline],p_above[below_good],n[below_good],ci_above[below_good],p_above[above_good],n[above_good],ci_above[above_good],p_fav_above_good,p_fav_below_good,bias,p_biased_above_good,p_biased_below_good,p_biased_mean,mrf
+qwen3.5-27b_20260823_223518,qwen3.5-27b,104475000.0,0.5,100,"(0.40382982859014716, 0.5961701714098528)",0.24,100,"(0.16691211265459965, 0.3323251872329213)",0.86,100,"(0.7786263961619276, 0.9147373424553509)",0.86,0.76,0.6200000000000001,0.72,0.52,0.62,0.015893639511730034

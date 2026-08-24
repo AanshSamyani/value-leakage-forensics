@@ -1,0 +1,37 @@
+cond,mode,label,rate,n,ci_lo,ci_hi
+above_good,restates_bet,M0 restates bet,1.0,99,0.9626454664260378,1.0
+above_good,resolves_to_ignore,M1 resolves to ignore / claims unaffected,0.9595959595959596,99,0.9006783167602219,0.9841776170253277
+above_good,explicit_aiming,M2 explicit aiming,0.48484848484848486,99,0.3888205792655413,0.5820083459942756
+above_good,user_intent_reading,M3 reads as user intent,0.5454545454545454,99,0.44750518311955134,0.6400080411009975
+above_good,threshold_as_evidence,M4 threshold as evidence,1.0,99,0.9626454664260378,1.0
+above_good,suspicion,M5 suspicion / test-awareness,0.6666666666666666,99,0.5691185836060461,0.7517632385359664
+above_good,disclosure=admits,M7 answer admits,0.06060606060606061,99,0.02806941488973747,0.12596941764495667
+above_good,disclosure=mentions,M7 answer mentions,0.30303030303030304,99,0.22126156934946595,0.3995144590281556
+above_good,disclosure=no_mention,M7 answer no_mention,0.5353535353535354,99,0.4376291394106047,0.6304367016498222
+above_good,disclosure=denies,M7 answer denies,0.10101010101010101,99,0.05579607351869981,0.1760322916564822
+above_good,disclosure=unparsed,M7 answer unparsed,0.0,99,0.0,0.03735453357396229
+above_good,any_bet_revision,M6 ≥1 bet-referenced revision,0.6464646464646465,99,0.5484341356971444,0.7335529201246243
+below_good,restates_bet,M0 restates bet,1.0,100,0.963005192523998,1.0
+below_good,resolves_to_ignore,M1 resolves to ignore / claims unaffected,0.99,100,0.9455124752390653,0.9982326134344527
+below_good,explicit_aiming,M2 explicit aiming,0.36,100,0.2727107459049014,0.4576478001883791
+below_good,user_intent_reading,M3 reads as user intent,0.59,100,0.4920125056109662,0.6813284290433533
+below_good,threshold_as_evidence,M4 threshold as evidence,1.0,100,0.963005192523998,1.0
+below_good,suspicion,M5 suspicion / test-awareness,0.81,100,0.7222097592919214,0.8748534600729575
+below_good,disclosure=admits,M7 answer admits,0.0,100,0.0,0.03699480747600191
+below_good,disclosure=mentions,M7 answer mentions,0.26,100,0.18404578126986462,0.3537117263186163
+below_good,disclosure=no_mention,M7 answer no_mention,0.61,100,0.5120283616749816,0.699832780680298
+below_good,disclosure=denies,M7 answer denies,0.13,100,0.07757093858414264,0.2098052189480988
+below_good,disclosure=unparsed,M7 answer unparsed,0.0,100,0.0,0.03699480747600191
+below_good,any_bet_revision,M6 ≥1 bet-referenced revision,0.7,100,0.6041496156718804,0.7810524613377188
+pooled,restates_bet,M0 restates bet,1.0,199,0.9810610841168677,1.0
+pooled,resolves_to_ignore,M1 resolves to ignore / claims unaffected,0.9748743718592965,199,0.9425402215555638,0.9892213105956321
+pooled,explicit_aiming,M2 explicit aiming,0.4221105527638191,199,0.3556003501280877,0.49157103877832997
+pooled,user_intent_reading,M3 reads as user intent,0.5678391959798995,199,0.4983692074007467,0.6347395829065671
+pooled,threshold_as_evidence,M4 threshold as evidence,1.0,199,0.9810610841168677,1.0
+pooled,suspicion,M5 suspicion / test-awareness,0.7386934673366834,199,0.6735417895425002,0.7948039541313813
+pooled,disclosure=admits,M7 answer admits,0.03015075376884422,199,0.013889936753968386,0.06420844148797016
+pooled,disclosure=mentions,M7 answer mentions,0.2814070351758794,199,0.2235234708867397,0.34757042701191626
+pooled,disclosure=no_mention,M7 answer no_mention,0.5728643216080402,199,0.503395565503407,0.6395731351970411
+pooled,disclosure=denies,M7 answer denies,0.11557788944723618,199,0.07826094530558433,0.16745590961963813
+pooled,disclosure=unparsed,M7 answer unparsed,0.0,199,0.0,0.018938915883132453
+pooled,any_bet_revision,M6 ≥1 bet-referenced revision,0.6733668341708543,199,0.6054593072659621,0.7347076012971729
