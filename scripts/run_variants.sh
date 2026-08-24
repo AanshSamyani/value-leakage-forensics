@@ -5,6 +5,11 @@
 #      REF_RUN (the main default-variant run whose baseline + threshold the giraffe variants reuse;
 #      default = newest data/runs/qwen3.5-27b_2*).
 #
+# Resumable: re-running reuses the newest existing run dir of each variant (every pipeline step is
+# idempotent — generation samples only missing rollouts, judge results are cached) and skips variants
+# whose run already has summary.csv + analysis/e2/summary.md. FRESH=1 forces new run dirs instead.
+# STATUS=1 only prints each variant's state (rollouts per condition, complete or not) and exits.
+#
 # Giraffe-question variants (hidden_threshold, no_consequence, stakes_*, user_prefers_bad) have a
 # baseline prompt byte-identical to the reference run's, so we copy its baseline.json (the generator's
 # resume check then skips those 100 rollouts) and its baseline judge-cache entries (baseline judging
@@ -17,8 +22,34 @@ cd "$ROOT"
 MODEL=${MODEL:-Qwen/Qwen3.5-27B}
 COUNT=${COUNT:-100}
 VARIANTS=${VARIANTS:-"hidden_threshold no_consequence stakes_low stakes_high user_prefers_bad known_answer_un"}
+SLUG=$(echo "${MODEL##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9.-]+/-/g')
 
-REF_RUN=${REF_RUN:-$(ls -d "$ROOT"/data/runs/qwen3.5-27b_2* 2>/dev/null | sort | tail -1)}
+latest_dir() { ls -d "$ROOT"/data/runs/"$1"_2* 2>/dev/null | sort | tail -1 || true; }
+is_complete() { [ -f "$1/summary.csv" ] && [ -f "$1/analysis/e2/summary.md" ]; }
+
+if [ "${STATUS:-0}" = "1" ]; then
+  for V in $VARIANTS; do
+    d=$(latest_dir "${SLUG}-$(echo "$V" | tr '_' '-')")
+    if [ -z "$d" ]; then echo "$V: not started"; continue; fi
+    python - "$V" "$d" <<'PY'
+import json, os, sys
+v, d = sys.argv[1], sys.argv[2]
+parts = []
+for c in ("baseline", "below_good", "above_good"):
+    p = os.path.join(d, c + ".json")
+    if os.path.exists(p):
+        rows = json.load(open(p))["rows"]
+        parts.append(f"{c}={sum(1 for r in rows if 'error' not in r)}/{len(rows)}")
+    else:
+        parts.append(f"{c}=0")
+done = os.path.exists(os.path.join(d, "summary.csv")) and os.path.exists(os.path.join(d, "analysis", "e2", "summary.md"))
+print(f"{v}: {os.path.basename(d)}  {' '.join(parts)}  -> {'COMPLETE' if done else 'INCOMPLETE (will resume)'}")
+PY
+  done
+  exit 0
+fi
+
+REF_RUN=${REF_RUN:-$(latest_dir "$SLUG")}
 if [ -z "$REF_RUN" ] || [ ! -f "$REF_RUN/threshold.json" ]; then
   echo "no reference run with threshold.json found — set REF_RUN=/path/to/qwen3.5-27b_<stamp>"; exit 1
 fi
@@ -27,24 +58,33 @@ echo "=== variant batch: $MODEL count=$COUNT   ref=$REF_RUN (threshold $REF_THRE
 echo "=== variants: $VARIANTS"
 
 STAMP=$(date +%Y%m%d_%H%M%S)
-SLUG=$(echo "${MODEL##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9.-]+/-/g')
 FAILED=""
 for V in $VARIANTS; do
   VSLUG="${SLUG}-$(echo "$V" | tr '_' '-')"
-  RUN_DIR="$ROOT/data/runs/${VSLUG}_${STAMP}"
+  RUN_DIR=""
+  [ "${FRESH:-0}" = "1" ] || RUN_DIR=$(latest_dir "$VSLUG")
+  if [ -n "$RUN_DIR" ] && is_complete "$RUN_DIR"; then
+    echo; echo "############ variant $V already complete -> $RUN_DIR (skipping)"; continue
+  fi
+  if [ -n "$RUN_DIR" ]; then
+    echo; echo "############ [$(date +%H:%M:%S)] variant $V RESUMING in $RUN_DIR"
+  else
+    RUN_DIR="$ROOT/data/runs/${VSLUG}_${STAMP}"
+    echo; echo "############ [$(date +%H:%M:%S)] variant $V -> $RUN_DIR"
+  fi
   mkdir -p "$RUN_DIR"
   THR=""
   if [ "$V" != "known_answer_un" ]; then
-    cp "$REF_RUN/baseline.json" "$RUN_DIR/baseline.json"
+    [ -f "$RUN_DIR/baseline.json" ] || cp "$REF_RUN/baseline.json" "$RUN_DIR/baseline.json"
     for kind in estimates trajectories; do
       if compgen -G "$REF_RUN/judge_cache/$kind/baseline__*.json" > /dev/null; then
         mkdir -p "$RUN_DIR/judge_cache/$kind"
-        cp "$REF_RUN"/judge_cache/"$kind"/baseline__*.json "$RUN_DIR/judge_cache/$kind/"
+        cp -n "$REF_RUN"/judge_cache/"$kind"/baseline__*.json "$RUN_DIR/judge_cache/$kind/" 2>/dev/null || true
       fi
     done
     THR=$REF_THRESHOLD
   fi
-  echo; echo "############ [$(date +%H:%M:%S)] variant $V -> $RUN_DIR (threshold=${THR:-fixed-by-variant})"
+  echo "            threshold=${THR:-fixed-by-variant}"
   if ! VARIANT="$V" THRESHOLD="$THR" RUN_DIR="$RUN_DIR" SKIP_MODES=1 \
        bash scripts/run_pipeline.sh "$MODEL" "$COUNT"; then
     echo "!!! variant $V FAILED — continuing with the next one"
@@ -53,6 +93,6 @@ for V in $VARIANTS; do
 done
 
 echo; echo "=== variant batch done ($(date))."
-[ -n "$FAILED" ] && echo "FAILED variants:$FAILED"
+[ -n "$FAILED" ] && echo "FAILED variants:$FAILED (re-run this script to resume them)"
 echo "Compare bias across variants (plus the reference run):"
-echo "  python scripts/00_summary.py --runs $REF_RUN $ROOT/data/runs/${SLUG}-*_${STAMP} --csv $ROOT/data/runs/variants_${STAMP}.csv"
+echo "  python scripts/00_summary.py --runs $REF_RUN $ROOT/data/runs/${SLUG}-*_2* --csv $ROOT/data/runs/variants_summary.csv"
