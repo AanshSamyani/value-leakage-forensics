@@ -1,0 +1,13 @@
+comparison,condition,first_side,n,mean_len,median_len,mean_logL,metric,scale,delta_incentive,delta_baseline,interaction,ci_lo,ci_hi,n_inc_bad,n_inc_good,n_base_bad,n_base_good
+above_good,incentive,bad,100.0,2736.36,2698.0,7.870141895398446,cell,,,,,,,,,,
+above_good,incentive,good,0.0,,,,cell,,,,,,,,,,
+above_good,baseline,bad,100.0,656.23,648.0,6.449095724183336,cell,,,,,,,,,,
+above_good,baseline,good,0.0,,,,cell,,,,,,,,,,
+below_good,incentive,bad,0.0,,,,cell,,,,,,,,,,
+below_good,incentive,good,99.0,1701.3838383838383,1566.0,7.3820430105939225,cell,,,,,,,,,,
+below_good,baseline,bad,0.0,,,,cell,,,,,,,,,,
+below_good,baseline,good,100.0,656.23,648.0,6.449095724183336,cell,,,,,,,,,,
+above_good,,,,,,,length_interaction,logL,,,,,,100.0,0.0,100.0,0.0
+above_good,,,,,,,length_interaction,tokens,,,,,,100.0,0.0,100.0,0.0
+below_good,,,,,,,length_interaction,logL,,,,,,0.0,99.0,0.0,100.0
+below_good,,,,,,,length_interaction,tokens,,,,,,0.0,99.0,0.0,100.0

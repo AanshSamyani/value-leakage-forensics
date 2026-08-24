@@ -1,0 +1,7 @@
+{
+  "threshold": 193,
+  "n_baseline": 100,
+  "n_valid": null,
+  "unknown_rate": null,
+  "note": "threshold fixed by variant known_answer_un"
+}

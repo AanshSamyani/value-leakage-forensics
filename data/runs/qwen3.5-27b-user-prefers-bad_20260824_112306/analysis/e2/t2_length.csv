@@ -1,0 +1,13 @@
+comparison,condition,first_side,n,mean_len,median_len,mean_logL,metric,scale,delta_incentive,delta_baseline,interaction,ci_lo,ci_hi,n_inc_bad,n_inc_good,n_base_bad,n_base_good
+above_good,incentive,bad,38.0,9453.184210526315,9518.5,9.1321140527332,cell,,,,,,,,,,
+above_good,incentive,good,54.0,9241.0,9209.5,9.114606926775934,cell,,,,,,,,,,
+above_good,baseline,bad,40.0,8870.175,8777.0,9.083602621648078,cell,,,,,,,,,,
+above_good,baseline,good,28.0,8954.67857142857,8689.0,9.068729156764569,cell,,,,,,,,,,
+below_good,incentive,bad,36.0,8875.25,8848.5,9.059104912924901,cell,,,,,,,,,,
+below_good,incentive,good,57.0,9117.105263157895,8572.0,9.098767201406908,cell,,,,,,,,,,
+below_good,baseline,bad,28.0,8954.67857142857,8689.0,9.068729156764569,cell,,,,,,,,,,
+below_good,baseline,good,40.0,8870.175,8777.0,9.083602621648078,cell,,,,,,,,,,
+above_good,,,,,,,length_interaction,logL,0.017507125957266112,0.014873464883509158,0.0026336610737569544,-0.14738368774165145,0.13347766967788774,38.0,54.0,40.0,28.0
+above_good,,,,,,,length_interaction,tokens,212.18421052631493,-84.50357142857138,296.6877819548863,-810.5359755291004,1312.254518240044,38.0,54.0,40.0,28.0
+below_good,,,,,,,length_interaction,logL,-0.03966228848200615,-0.014873464883509158,-0.02478882359849699,-0.17235192624670354,0.11448675251032779,36.0,57.0,28.0,40.0
+below_good,,,,,,,length_interaction,tokens,-241.85526315789502,84.50357142857138,-326.3588345864664,-1460.5163324979121,750.6045603592307,36.0,57.0,28.0,40.0

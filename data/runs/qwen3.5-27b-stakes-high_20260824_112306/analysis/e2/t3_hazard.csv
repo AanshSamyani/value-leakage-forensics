@@ -1,0 +1,25 @@
+group,side,metric,p,k,n_steps,ci_lo,ci_hi
+above_good,good,hazard P(stop | side),0.15521064301552107,70.0,451.0,0.11623435722411832,0.2156312003968254
+above_good,good,"hazard P(stop | side), K>=2",0.10352941176470588,44.0,425.0,,
+above_good,bad,hazard P(stop | side),0.08583690987124463,20.0,233.0,0.05479184503424657,0.13410049011207456
+above_good,bad,"hazard P(stop | side), K>=2",0.04054054054054054,9.0,222.0,,
+baseline[good=above],good,hazard P(stop | side),0.06607929515418502,30.0,454.0,0.049807199129167354,0.08943154367645913
+baseline[good=above],good,"hazard P(stop | side), K>=2",0.0598669623059867,27.0,451.0,,
+baseline[good=above],bad,hazard P(stop | side),0.06810035842293907,38.0,558.0,0.05512986699786569,0.08893849029957276
+baseline[good=above],bad,"hazard P(stop | side), K>=2",0.059674502712477394,33.0,553.0,,
+baseline[good=below],good,hazard P(stop | side),0.06810035842293907,38.0,558.0,0.05512986699786569,0.08893849029957276
+baseline[good=below],good,"hazard P(stop | side), K>=2",0.059674502712477394,33.0,553.0,,
+baseline[good=below],bad,hazard P(stop | side),0.06607929515418502,30.0,454.0,0.049807199129167354,0.08943154367645913
+baseline[good=below],bad,"hazard P(stop | side), K>=2",0.0598669623059867,27.0,451.0,,
+below_good,good,hazard P(stop | side),0.126,63.0,500.0,0.09755626342971313,0.16962256667878506
+below_good,good,"hazard P(stop | side), K>=2",0.08958333333333333,43.0,480.0,,
+below_good,bad,hazard P(stop | side),0.07988165680473373,27.0,338.0,0.06,0.10764188218390805
+below_good,bad,"hazard P(stop | side), K>=2",0.07164179104477612,24.0,335.0,,
+above_good,both,hazard(good) - hazard(bad),0.06937373314427643,,,,
+above_good,both,hazard ratio good/bad,1.8082039911308205,,,,
+baseline[good=above],both,hazard(good) - hazard(bad),-0.0020210632687540503,,,,
+baseline[good=above],both,hazard ratio good/bad,0.9703222814746115,,,,
+baseline[good=below],both,hazard(good) - hazard(bad),0.0020210632687540503,,,,
+baseline[good=below],both,hazard ratio good/bad,1.0305854241338113,,,,
+below_good,both,hazard(good) - hazard(bad),0.04611834319526627,,,,
+below_good,both,hazard ratio good/bad,1.5773333333333333,,,,

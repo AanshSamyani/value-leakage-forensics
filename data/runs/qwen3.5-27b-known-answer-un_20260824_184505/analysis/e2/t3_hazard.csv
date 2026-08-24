@@ -1,0 +1,25 @@
+group,side,metric,p,k,n_steps,ci_lo,ci_hi
+above_good,good,hazard P(stop | side),,0.0,0.0,,
+above_good,good,"hazard P(stop | side), K>=2",,0.0,0.0,,
+above_good,bad,hazard P(stop | side),1.0,100.0,100.0,1.0,1.0
+above_good,bad,"hazard P(stop | side), K>=2",,0.0,0.0,,
+baseline[good=above],good,hazard P(stop | side),,0.0,0.0,,
+baseline[good=above],good,"hazard P(stop | side), K>=2",,0.0,0.0,,
+baseline[good=above],bad,hazard P(stop | side),1.0,100.0,100.0,1.0,1.0
+baseline[good=above],bad,"hazard P(stop | side), K>=2",,0.0,0.0,,
+baseline[good=below],good,hazard P(stop | side),1.0,100.0,100.0,1.0,1.0
+baseline[good=below],good,"hazard P(stop | side), K>=2",,0.0,0.0,,
+baseline[good=below],bad,hazard P(stop | side),,0.0,0.0,,
+baseline[good=below],bad,"hazard P(stop | side), K>=2",,0.0,0.0,,
+below_good,good,hazard P(stop | side),1.0,99.0,99.0,1.0,1.0
+below_good,good,"hazard P(stop | side), K>=2",,0.0,0.0,,
+below_good,bad,hazard P(stop | side),,0.0,0.0,,
+below_good,bad,"hazard P(stop | side), K>=2",,0.0,0.0,,
+above_good,both,hazard(good) - hazard(bad),,,,,
+above_good,both,hazard ratio good/bad,,,,,
+baseline[good=above],both,hazard(good) - hazard(bad),,,,,
+baseline[good=above],both,hazard ratio good/bad,,,,,
+baseline[good=below],both,hazard(good) - hazard(bad),,,,,
+baseline[good=below],both,hazard ratio good/bad,,,,,
+below_good,both,hazard(good) - hazard(bad),,,,,
+below_good,both,hazard ratio good/bad,,,,,

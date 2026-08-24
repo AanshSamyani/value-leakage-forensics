@@ -1,0 +1,8 @@
+metric,cond,value,n,ci_lo,ci_hi
+P(first > T),baseline,0.0,100,0.0,0.03699480747600191
+P(first > T),above_good,0.0,100,0.0,0.03699480747600191
+P(first > T),below_good,0.0,99,0.0,0.03735453357396229
+P(first>T|above_good) - P(first>T|below_good),diff,0.0,199,0.0,0.0
+P(first>T|above_good) - P(first>T|baseline),diff_vs_base,0.0,200,0.0,0.0
+P(first>T|baseline) - P(first>T|below_good),diff_vs_base,0.0,199,0.0,0.0
+P(first on favoured side),pooled,0.49748743718592964,199,0.42872650785379013,0.5663435369496428
