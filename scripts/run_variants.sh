@@ -26,14 +26,29 @@ SLUG=$(echo "${MODEL##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9.-]+
 
 latest_dir() { ls -d "$ROOT"/data/runs/"$1"_2* 2>/dev/null | sort | tail -1 || true; }
 is_complete() { [ -f "$1/summary.csv" ] && [ -f "$1/analysis/e2/summary.md" ]; }
+# The run dir a variant should use: a COMPLETE one if any exists (newest first), else the newest
+# incomplete one (to resume), else empty. A stale fresh dir must never shadow a finished run.
+pick_dir() {
+  local d best=""
+  for d in $(ls -d "$ROOT"/data/runs/"$1"_2* 2>/dev/null | sort -r || true); do
+    if is_complete "$d"; then echo "$d"; return; fi
+    [ -z "$best" ] && best=$d
+  done
+  echo "$best"
+}
 
 if [ "${STATUS:-0}" = "1" ]; then
   for V in $VARIANTS; do
-    d=$(latest_dir "${SLUG}-$(echo "$V" | tr '_' '-')")
-    if [ -z "$d" ]; then echo "$V: not started"; continue; fi
-    python - "$V" "$d" <<'PY'
+    VSLUG="${SLUG}-$(echo "$V" | tr '_' '-')"
+    dirs=$(ls -d "$ROOT"/data/runs/"$VSLUG"_2* 2>/dev/null | sort -r || true)
+    if [ -z "$dirs" ]; then echo "$V: not started"; continue; fi
+    use=$(pick_dir "$VSLUG")
+    echo "$V:"
+    for d in $dirs; do
+      tag="     "; [ "$d" = "$use" ] && tag="  -> "
+      python - "$tag" "$d" <<'PY'
 import json, os, sys
-v, d = sys.argv[1], sys.argv[2]
+tag, d = sys.argv[1], sys.argv[2]
 parts = []
 for c in ("baseline", "below_good", "above_good"):
     p = os.path.join(d, c + ".json")
@@ -43,8 +58,10 @@ for c in ("baseline", "below_good", "above_good"):
     else:
         parts.append(f"{c}=0")
 done = os.path.exists(os.path.join(d, "summary.csv")) and os.path.exists(os.path.join(d, "analysis", "e2", "summary.md"))
-print(f"{v}: {os.path.basename(d)}  {' '.join(parts)}  -> {'COMPLETE' if done else 'INCOMPLETE (will resume)'}")
+state = "COMPLETE" if done else ("INCOMPLETE (will resume)" if tag.strip() else "INCOMPLETE (stale duplicate — safe to delete)")
+print(f"{tag}{os.path.basename(d)}  {' '.join(parts)}  -> {state}")
 PY
+    done
   done
   exit 0
 fi
@@ -62,7 +79,7 @@ FAILED=""
 for V in $VARIANTS; do
   VSLUG="${SLUG}-$(echo "$V" | tr '_' '-')"
   RUN_DIR=""
-  [ "${FRESH:-0}" = "1" ] || RUN_DIR=$(latest_dir "$VSLUG")
+  [ "${FRESH:-0}" = "1" ] || RUN_DIR=$(pick_dir "$VSLUG")
   if [ -n "$RUN_DIR" ] && is_complete "$RUN_DIR"; then
     echo; echo "############ variant $V already complete -> $RUN_DIR (skipping)"; continue
   fi
