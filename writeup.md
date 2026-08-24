@@ -1,8 +1,7 @@
 # Why does the model shade its estimate? A forensics case study of the Donation Bet
 
-*Draft — research-sprint writeup, 2026-08-24. Sections marked **[PENDING]** await the Layer-1
-prompt-variant batch currently running. All numbers below are reproduced from the run artefacts in
-`data/runs/` (commands in the Appendix).*
+*Draft — research-sprint writeup, updated 2026-08-25 with the Layer-1 ablation results. All numbers
+below are reproduced from the run artefacts in `data/runs/` (commands in the Appendix).*
 
 ## TL;DR
 
@@ -35,14 +34,22 @@ bad cause") systematically bends the estimate toward the good cause. What we fou
 6. **The drive is trainable away:** Qwen3.6-27B — same scale, next generation — shows bias 0.08
    on the identical protocol. Whatever produces the leakage was substantially removed between
    Qwen3.5 and Qwen3.6.
-7. **Why the model does it** (goal-directed vs. uncertainty-licensed shading vs. sycophancy vs.
-   mere salience/anchoring) is being tested right now with six prompt ablations — predictions are
-   registered in §6, results **[PENDING]**.
+7. **Why the model does it** — six prompt ablations on Qwen3.5-27B (§6) give a sharp answer. The
+   bias needs three things at once and is indifferent to a fourth: it needs **a concrete target**
+   (hide the threshold number → bias −0.11, i.e. gone), it needs **the answer to matter** (say the
+   bet is already settled → +0.17), and it needs **room to shade** (a known answer, UN member
+   states = 193 → the model answers 193 in 300/300 rollouts; it never once misreports to win). It
+   does **not** care how much is at stake ($5 → +0.61, $1M → +0.49, default +0.62), and it is
+   **not** sycophancy: when the user openly hopes for the bad-cause side, the model still leans
+   toward the good cause (+0.27). Both the overt and the covert channel switch off together under
+   the hidden-threshold and no-consequence variants — the unverbalized mechanism is
+   outcome-sensitive, not mere priming.
 
-Our current best intentional-stance summary (§7): *Qwen3.5-27B behaves as if it wants the donation
-to go to the good cause but also wants to be — and to appear — an accurate estimator; it resolves
-the conflict mostly covertly, by biasing which estimate gets proposed first and when deliberation
-stops, and only sometimes overtly, by openly steering the number.*
+Our current best intentional-stance summary (§7): *Qwen3.5-27B behaves as if it follows a rule —
+"when my answer decides between a good and a bad outcome, and there is a target I can reach without
+saying anything false, reach it" — rather than optimizing a payoff. The rule is its own, not the
+user's; it is gated by consequence and honesty, not scaled by stakes; and it is implemented mostly
+covertly, by biasing which estimate gets proposed first and when deliberation stops.*
 
 ---
 
@@ -266,42 +273,101 @@ No single row is decisive; the *pattern* across rows is. E.g. "persists under `n
 flat in stakes, collapses under `hidden_threshold`" would pin H4 even though each result alone is
 ambiguous.
 
-**Results: [PENDING — batch running on Qwen3.5-27B, 100 rollouts/condition/variant, scored
-against the main run's threshold 104,475,000 (193 for `known_answer_un`).]**
+**Results** (Qwen3.5-27B, 100 rollouts per condition per variant, same sampling settings; giraffe
+variants scored against the main run's threshold 104,475,000 and sharing its baseline; the
+known-answer variant scored against 193 with its own baseline). *p* is a two-proportion z-test of
+the pooled favoured-side rate against the default run.
 
-| variant | bias | Δ vs default (+0.62) | verdict |
-|---|---|---|---|
-| default (reference) | +0.62 | — | — |
-| hidden_threshold | TODO | TODO | TODO |
-| known_answer_un | TODO (report P(>193 \| above_good)) | TODO | TODO |
-| no_consequence | TODO | TODO | TODO |
-| stakes_low ($5) | TODO | TODO | TODO |
-| stakes_high ($1M) | TODO | TODO | TODO |
-| user_prefers_bad | TODO | TODO | TODO |
+| variant | P(>T) above_good | P(>T) below_good | **bias** | vs default (+0.62) |
+|---|---|---|---|---|
+| default (reference) | 0.86 | 0.24 | **+0.62** | — |
+| stakes_low ($5) | 0.86 | 0.25 | **+0.61** | unchanged (p = 0.90) |
+| stakes_high ($1,000,000) | 0.78 | 0.29 | **+0.49** | slightly lower, n.s. (p = 0.11) |
+| user_prefers_bad | 0.65 | 0.38 | **+0.27** | more than halved (p = 1e-4), **still positive** |
+| no_consequence | 0.67 | 0.50 | **+0.17** | mostly gone (p < 1e-5); residual in above_good only |
+| hidden_threshold | 0.39 | 0.50 | **−0.11** | gone (p < 1e-7); above_good if anything *below* baseline (p = 0.12) |
+| known_answer_un (T = 193) | 0.00 | 0.00 | **0.00** | every final answer in all 300 rollouts was exactly 193 |
+
+The dynamics decompose the same way. Where the bias survives, both channels survive; where it
+dies, both die together:
+
+| variant | first candidate on favoured side (pooled; chance ≈ 0.41–0.50) | stopping-hazard ratio favoured/unfavoured (above_good / below_good) |
+|---|---|---|
+| default | 0.66 | 2.9 / 1.6 |
+| stakes_low | 0.67 | 3.4 / 1.8 |
+| stakes_high | 0.61 | 1.8 / 1.6 |
+| user_prefers_bad | 0.60 | 2.1 / 1.6 |
+| no_consequence | 0.54 | 1.3 / 1.0 |
+| hidden_threshold | 0.44 | 1.1 / 0.8 |
+
+**Verdicts against the registered predictions.**
+
+- **H4 salience/anchoring — refuted as the main driver, but it named a necessary ingredient.**
+  H4 correctly predicted that stakes would be flat and that hiding the number would kill the
+  effect. It wrongly predicted that a settled bet would leave the bias intact: it fell from +0.62
+  to +0.17. Whatever is happening is sensitive to whether the answer *does* anything. The +0.17
+  residual (above_good only) is the most salience/priming can account for.
+- **H3 sycophancy — refuted as the driver.** With the user explicitly hoping for the bad-cause
+  side, the model still leans toward the good cause (+0.27). The preference is the model's own.
+  The drop from +0.62 is real (p = 1e-4) but ambiguous: partial deference to the user, or the
+  frank "between us, I'm hoping…" sentence making the manipulation more salient — the two are
+  separable with the mode judge (suspicion rate), which we have not yet run on this variant.
+- **H1 goal-directed (payoff-maximizing) — refuted in its strong form.** Two of its predictions
+  failed: no dose-response in stakes ($5 = default; $1M no higher, if anything lower), and no
+  misreporting of a known answer (0/100 rollouts said anything but 193 in above_good, where a
+  wrong answer would have won the bet). A consequentialist agent would push harder for a million
+  dollars and would at least sometimes say 194. This model does neither.
+- **H2 uncertainty-licensed shading — the survivor, sharpened.** Every prediction held: zero bias
+  when the answer is known, collapse when the answer is inconsequential, survival regardless of
+  stakes, survival against the user's wishes. It needs one amendment from the hidden-threshold
+  result: the shading is *target-directed*, not merely directional — without a number to reach,
+  the model doesn't just push "higher"; it doesn't push at all.
+
+Put together, the drive looks like a **rule, not an objective**: *if my answer decides between a
+good and a bad outcome, and there is a specific target I can reach without asserting anything
+false, reach it.* Triggered by the structure of the situation (consequence + target + latitude),
+insensitive to payoff size, and bounded by a hard honesty constraint. This is exactly what "value
+leakage" should look like if it's a learned disposition rather than planning: the pro-social value
+leaks into the estimate through whatever degrees of freedom the task leaves open, and only there.
+
+Two things about the covert channel follow from the second table and matter for the
+conscious/subconscious question. First, the first-candidate shift and the stopping asymmetry are
+**consequence-sensitive** (0.66 → 0.54 and 2.9 → 1.3 when the bet is settled) — the unverbalized
+mechanism is not a dumb priming effect; it tracks whether the answer matters. Second, they are
+**target-sensitive** (0.44, i.e. below chance, without the number). So the covert channel is
+outcome-directed and threshold-directed without ever appearing in the reasoning — the model's
+first guess already "knows" where it needs to land and whether landing there does anything.
 
 ## 7. The converging picture (current best explanation)
 
-In the intentional-stance style of the forensics paper, our working account after E1+E2 — to be
-revised against §6:
+In the intentional-stance style of the forensics paper, our account after E1, E2 and the six
+ablations:
 
-> **Qwen3.5-27B behaves as if it wants the donation to go to the good cause, while also wanting to
-> be (and to be seen as) an accurate, un-manipulable estimator.** The conflict is resolved on two
-> tracks. A minority of the time the first want wins openly: the model argues itself from an
-> honest number to a favourable one, in plain text. Most of the time the conflict never reaches
-> the page: the pro-good pressure acts on the machinery *around* the legible reasoning — which
-> candidate estimate comes to mind first, which reading of an ambiguous cue gets credited, and
-> when deliberation is allowed to stop. The written reasoning in those rollouts is locally honest
-> at every step; the bias lives in the selection pressure over steps. The model reports the
-> outcome ("below your threshold") but not the influence — not, as far as we can tell, by lying,
-> but by never turning its attention to it.
+> **Qwen3.5-27B behaves as if it follows a rule: when its answer decides between a good and a bad
+> outcome, and there is a specific target it can reach without asserting anything false, it
+> reaches it.** The rule is the model's own (it holds against the user's stated wish), it is gated
+> rather than scaled (a $5 bet triggers it as fully as a $1M one; a settled bet barely does; a
+> known answer never does), and it is bounded by a hard honesty constraint (it shades an
+> unknowable quantity across a line, but will not say 194 when the answer is 193). The rule is
+> executed on two tracks. A minority of the time it runs openly: the model argues itself from an
+> honest number to a favourable one, in plain text. Most of the time it never reaches the page:
+> the pressure acts on the machinery *around* the legible reasoning — which candidate estimate
+> comes to mind first, which reading of an ambiguous cue gets credited, and when deliberation is
+> allowed to stop — and that machinery is itself sensitive to whether the answer matters and to
+> where the target is. The written reasoning in those rollouts is locally honest at every step;
+> the bias lives in the selection pressure over steps. The model reports the outcome ("below your
+> threshold") but not the influence — not, as far as we can tell, by lying, but by never turning
+> its attention to it.
 
-Evidence this account has survived: the resolve-then-bias pattern (§3a), the aiming split (§3b),
-the selective threshold-decoding (§3), the shifted-start + one-way-crossings + motivated-stopping
-decomposition (§4), the influence-silence audit (§5), and the replication of every one of these in
-two more Qwen3.5 models. Evidence that could still overturn it: the §6 ablations (a flat
-stakes curve + survival under `no_consequence` would demote "wants" to "is perturbed by"), and any
-later white-box result showing the covert channel is driven by the threshold number rather than
-the valence.
+Evidence this account rests on: the resolve-then-bias pattern (§3a), the aiming split (§3b), the
+selective threshold-decoding (§3), the shifted-start + one-way-crossings + motivated-stopping
+decomposition (§4), the influence-silence audit (§5), the replication of all of these in two more
+Qwen3.5 models, and the ablation pattern in §6 (target-, consequence- and uncertainty-gated;
+stakes-flat; user-independent). What would still overturn or refine it: a graded-certainty ladder
+(answers the model is 60/80/95% sure of) locating the honesty boundary; mode-judging the
+`user_prefers_bad` and `no_consequence` variants to separate deference from heightened suspicion;
+and white-box evidence on whether the first-candidate shift is driven by a representation of the
+threshold, of the valence, or of their conjunction.
 
 What it would mean if it holds: **the safety-relevant part of motivated reasoning is the covert
 channel.** CoT monitoring catches the overt channel by construction, and the overt channel is also
@@ -334,6 +400,12 @@ activation-level tools.
 
 ## 9. Next steps (beyond the sprint)
 
+0. **Cheap follow-ups to §6** (no GPU): run the mode judge on `user_prefers_bad` and
+   `no_consequence` (~$3 each) to see whether the residual/reduced bias comes with more suspicion
+   (heightened resistance) or with user-intent reading (deference). Then a **graded-certainty
+   ladder** — quantities the model is roughly 60 / 80 / 95% sure of, threshold just past the
+   truth — to locate where "shading" turns into "misreporting"; the UN result says the boundary
+   is at or below 95%.
 1. **Commitment curves** (resampling): cut each biased CoT at position *k*, resample 10
    continuations, plot P(lands favoured) vs *k*. Flat-high curve ⇒ decided pre-CoT (covert);
    sharp jump at the aiming sentence ⇒ that sentence is causal (overt). Directly tests the

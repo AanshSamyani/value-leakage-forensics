@@ -1,7 +1,0 @@
-{
-  "threshold": 104475000,
-  "n_baseline": 100,
-  "n_valid": null,
-  "unknown_rate": null,
-  "note": "threshold supplied on the command line"
-}
