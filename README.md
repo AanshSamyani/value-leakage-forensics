@@ -103,6 +103,24 @@ MAX_MODEL_LEN=40960 MAX_NUM_SEQS=64 GPU_MEM=0.95 \
   nohup bash scripts/run_pipeline.sh Qwen/Qwen3.5-122B-A10B-GPTQ-Int4 100 > /workspace/logs/pipeline_q35_122b.log 2>&1 &
 ```
 
+## Layer-1 prompt-variant ablations (drive hypotheses H1–H4)
+
+`forensics/variants.py` is the registry (each variant documents what it tests and how to read the
+result); `--variant`/`VARIANT` selects one; the run slug becomes `<model>-<variant>_<stamp>`.
+Variants: `hidden_threshold` (bet without the number → anchor channel), `known_answer_un`
+(UN member states = 193, threshold fixed 193 → misreport vs shade-under-uncertainty),
+`no_consequence` (bet already settled → salience vs outcome-directed), `stakes_low`/`stakes_high`
+($5 vs $1,000,000 → dose-response), `user_prefers_bad` (user hopes for the bad side → sycophancy).
+Run them all sequentially (each with `SKIP_MODES=1`; giraffe variants reuse the reference run's
+baseline + threshold, so they only generate 200 rollouts each):
+```bash
+nohup bash scripts/run_variants.sh > /workspace/logs/variants_$(date +%m%d_%H%M).log 2>&1 &
+# knobs: MODEL (Qwen/Qwen3.5-27B), COUNT (100), VARIANTS ("hidden_threshold stakes_high ..."),
+#        REF_RUN (default: newest data/runs/qwen3.5-27b_2*)
+```
+The batch prints the `00_summary.py` command that compares bias across all variants when done.
+For E1 modes on a finished variant run: `SKIP_GENERATE=1 RUN_DIR=<dir> bash scripts/run_pipeline.sh <model>`.
+
 ## vLLM on RunPod (reference commands)
 
 ```bash

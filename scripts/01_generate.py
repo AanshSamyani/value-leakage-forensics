@@ -37,8 +37,8 @@ import numpy as np
 from _common import RUNS_ROOT  # noqa: E402
 from forensics.judges.anthropic_judge import AnthropicJudge  # noqa: E402
 from forensics.judges.prompts_paper import NUMBER_JUDGE_PROMPT, parse_tagged_estimate  # noqa: E402
-from forensics.prompts import build_prompt  # noqa: E402
 from forensics.runs import write_json  # noqa: E402
+from forensics.variants import VARIANTS, get_variant  # noqa: E402
 
 
 def _slug(model: str) -> str:
@@ -77,8 +77,8 @@ def _load_existing(path: Path) -> dict | None:
     return None
 
 
-async def sample_condition(sampler, condition: str, threshold: int | None, count: int, out_path: Path, meta: dict) -> dict:
-    prompt = build_prompt(condition, threshold)
+async def sample_condition(sampler, variant, condition: str, threshold: int | None, count: int, out_path: Path, meta: dict) -> dict:
+    prompt = variant.build(condition, threshold)
     existing = _load_existing(out_path)
     rows_by_i: dict[int, dict] = {}
     if existing and existing.get("prompt") == prompt:
@@ -131,28 +131,34 @@ async def judge_baseline_finals(run_dir: Path, rows: list[dict], judge_model: st
 
 
 async def main_async(args):
+    variant = get_variant(args.variant)
     sampler = make_sampler(args)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = Path(args.run_dir) if args.run_dir else RUNS_ROOT / f"{_slug(args.model)}_{stamp}"
+    slug = _slug(args.model) + ("" if args.variant == "default" else "-" + args.variant.replace("_", "-"))
+    run_dir = Path(args.run_dir) if args.run_dir else RUNS_ROOT / f"{slug}_{stamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     meta = {"model": args.model, "backend": args.sampler, "provider": None,
             "max_tokens": args.max_tokens, "reasoning_effort": args.renderer or args.extra_body or args.chat_template_kwargs or None}
-    config = {"model": _slug(args.model), "model_id": args.model, "backend": args.sampler, "provider": None,
-              "task": "giraffes", "count": args.count, "target_max_tokens": args.max_tokens,
+    config = {"model": slug, "model_id": args.model, "backend": args.sampler, "provider": None,
+              "task": "giraffes" if args.variant != "known_answer_un" else "un_member_states",
+              "variant": args.variant, "variant_description": variant.description,
+              "count": args.count, "target_max_tokens": args.max_tokens,
               "target_reasoning_effort": args.renderer or args.extra_body or args.chat_template_kwargs, "judge_model": args.judge_model,
               "temperature": args.temperature, "top_p": args.top_p, "sampler": sampler.describe()}
     write_json(run_dir / "config.json", config)
-    print(f"run dir: {run_dir}")
+    print(f"run dir: {run_dir}   (variant={args.variant})")
 
     # 1) baseline
-    base = await sample_condition(sampler, "baseline", None, args.count, run_dir / "baseline.json", meta)
+    base = await sample_condition(sampler, variant, "baseline", None, args.count, run_dir / "baseline.json", meta)
 
-    # 2) threshold = median of judged baseline finals
+    # 2) threshold = median of judged baseline finals (or fixed by CLI / variant)
     thr_path = run_dir / "threshold.json"
-    if args.threshold is not None:
-        threshold = int(args.threshold)
+    fixed = args.threshold if args.threshold is not None else variant.fixed_threshold
+    if fixed is not None:
+        threshold = int(fixed)
+        note = "threshold supplied on the command line" if args.threshold is not None else f"threshold fixed by variant {args.variant}"
         write_json(thr_path, {"threshold": threshold, "n_baseline": args.count, "n_valid": None, "unknown_rate": None,
-                              "note": "threshold supplied on the command line"})
+                              "note": note})
         estimates = {"baseline": [None] * args.count}
     else:
         finals = await judge_baseline_finals(run_dir, base["rows"], args.judge_model, args.judge_concurrency)
@@ -168,8 +174,8 @@ async def main_async(args):
 
     # 3) incentive conditions
     await asyncio.gather(
-        sample_condition(sampler, "below_good", threshold, args.count, run_dir / "below_good.json", meta),
-        sample_condition(sampler, "above_good", threshold, args.count, run_dir / "above_good.json", meta),
+        sample_condition(sampler, variant, "below_good", threshold, args.count, run_dir / "below_good.json", meta),
+        sample_condition(sampler, variant, "above_good", threshold, args.count, run_dir / "above_good.json", meta),
     )
     print("generation complete. Next: python scripts/02_judge_paper.py --run-dir", run_dir)
 
@@ -185,6 +191,8 @@ def main():
     ap.add_argument("--concurrency", type=int, default=16, help="vllm: concurrent requests; tinker: concurrent sample() calls")
     ap.add_argument("--run-dir", default=None, help="existing/target run dir (default: data/runs/<model>_<stamp>)")
     ap.add_argument("--threshold", type=int, default=None, help="skip baseline judging and use this threshold")
+    ap.add_argument("--variant", default="default", choices=sorted(VARIANTS),
+                    help="prompt variant from forensics/variants.py (Layer-1 ablations)")
     ap.add_argument("--judge-model", default="claude-haiku-4-5")
     ap.add_argument("--judge-concurrency", type=int, default=16)
     # vllm

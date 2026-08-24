@@ -10,10 +10,14 @@
 #            SAMPLER (vllm_offline|vllm), TP (tensor parallel, offline), MAX_MODEL_LEN (65536), GPU_MEM (0.92), MAX_NUM_SEQS (128),
 #            CHAT_TEMPLATE_KWARGS (JSON, e.g. '{"reasoning_effort":"high"}' for gpt-oss),
 #            RUN_DIR (default data/runs/<slug>_<stamp>), SKIP_MODES=1 to stop before the E1 judge,
-#            SKIP_GENERATE=1 to run steps 2-7 on an existing RUN_DIR (e.g. one of Aditya's runs).
+#            SKIP_GENERATE=1 to run steps 2-7 on an existing RUN_DIR (e.g. one of Aditya's runs),
+#            VARIANT (prompt variant from forensics/variants.py, default "default"; changes the run slug),
+#            THRESHOLD (fixed threshold, skips baseline judging — use the main run's threshold for variants).
 set -euo pipefail
 MODEL=${1:-Qwen/Qwen3.6-27B}
 COUNT=${2:-100}
+VARIANT=${VARIANT:-default}
+THRESHOLD=${THRESHOLD:-}
 MAX_TOKENS=${MAX_TOKENS:-32000}
 CONCURRENCY=${CONCURRENCY:-32}
 JUDGE_MODEL=${JUDGE_MODEL:-claude-haiku-4-5}
@@ -34,6 +38,7 @@ set -a; [ -f .env ] && source .env; set +a
 : "${ANTHROPIC_API_KEY:?ANTHROPIC_API_KEY missing — put it in $ROOT/.env}"
 
 SLUG=$(echo "${MODEL##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9.-]+/-/g')
+[ "$VARIANT" != "default" ] && SLUG="${SLUG}-$(echo "$VARIANT" | tr '_' '-')"
 RUN_DIR=${RUN_DIR:-$ROOT/data/runs/${SLUG}_$(date +%Y%m%d_%H%M%S)}
 mkdir -p "$RUN_DIR" /workspace/logs 2>/dev/null || mkdir -p "$RUN_DIR"
 echo "=== pipeline for $MODEL -> $RUN_DIR   ($(date))"
@@ -48,7 +53,7 @@ else
     step "0/7 waiting for vLLM server"
     bash scripts/wait_for_vllm.sh
   fi
-  step "1/7 generate rollouts (sampler=$SAMPLER, count=$COUNT, max_tokens=$MAX_TOKENS)"
+  step "1/7 generate rollouts (sampler=$SAMPLER, variant=$VARIANT, count=$COUNT, max_tokens=$MAX_TOKENS)"
   EXTRA=()
   if [ "$SAMPLER" = "vllm_offline" ]; then
     EXTRA+=(--tp "$TP" --max-model-len "$MAX_MODEL_LEN" --gpu-mem "$GPU_MEM" --max-num-seqs "$MAX_NUM_SEQS")
@@ -56,8 +61,9 @@ else
   else
     EXTRA+=(--concurrency "$CONCURRENCY")
   fi
+  [ -n "$THRESHOLD" ] && EXTRA+=(--threshold "$THRESHOLD")
   python scripts/01_generate.py --sampler "$SAMPLER" --model "$MODEL" --count "$COUNT" --max-tokens "$MAX_TOKENS" \
-         --run-dir "$RUN_DIR" --judge-model "$JUDGE_MODEL" "${EXTRA[@]}"
+         --variant "$VARIANT" --run-dir "$RUN_DIR" --judge-model "$JUDGE_MODEL" "${EXTRA[@]}"
 fi
 
 step "2/7 paper judges (estimate judge on answers, trajectory judge on reasoning)"
