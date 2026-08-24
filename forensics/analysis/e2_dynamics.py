@@ -189,9 +189,12 @@ def _cluster_boot_rate(sub: pd.DataFrame, num_mask, den_mask, n_boot: int = 1000
     return (float(np.percentile(vals, 2.5)), float(np.percentile(vals, 97.5)))
 
 
+_T3_COLS = ["group", "side", "metric", "p", "k", "n_steps", "n_rollouts", "ci_lo", "ci_hi"]
+
+
 def t3_transitions(steps: pd.DataFrame) -> pd.DataFrame:
     recs = []
-    moves = steps[steps.move.notna()]
+    moves = steps[steps.move.notna()]   # empty when every rollout has a single candidate (e.g. known-answer tasks)
     for group, s in moves.groupby("group"):
         bad = s[s.side == "bad"]
         good = s[s.side == "good"]
@@ -202,7 +205,9 @@ def t3_transitions(steps: pd.DataFrame) -> pd.DataFrame:
             lo, hi = _cluster_boot_rate(sub, sub.move == target, pd.Series(True, index=sub.index))
             recs.append(dict(group=group, side=side, metric=f"P({target} | on {side} side)", p=(k / n if n else float("nan")),
                              k=k, n_steps=n, n_rollouts=sub.rollout.nunique(), ci_lo=lo, ci_hi=hi))
-    out = pd.DataFrame(recs)
+    out = pd.DataFrame(recs, columns=_T3_COLS)
+    if out.empty:
+        return out
     # asymmetry per group: P(toward good|bad) - P(toward bad|good)
     asym = []
     for group, s in out.groupby("group"):
@@ -230,7 +235,9 @@ def t3_hazard(steps: pd.DataFrame) -> pd.DataFrame:
             k2 = int(sub2.is_last.sum())
             recs.append(dict(group=group, side=side, metric="hazard P(stop | side), K>=2", p=(k2 / n2 if n2 else float("nan")),
                              k=k2, n_steps=n2, ci_lo=np.nan, ci_hi=np.nan))
-    out = pd.DataFrame(recs)
+    out = pd.DataFrame(recs, columns=[c for c in _T3_COLS if c != "n_rollouts"])
+    if out.empty:
+        return out
     diffs = []
     for group, s in out[out.metric == "hazard P(stop | side)"].groupby("group"):
         hg = s[s.side == "good"].p.values
