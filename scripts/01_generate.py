@@ -45,6 +45,17 @@ def _slug(model: str) -> str:
     return re.sub(r"[^A-Za-z0-9.\-]+", "-", model.split("/")[-1]).strip("-").lower()
 
 
+def _steer_cfg(args) -> dict | None:
+    if not getattr(args, "steer_vector", None):
+        return None
+    layers = [int(x) for x in args.steer_layers.split(",")] if args.steer_layers else None
+    return {"vector": args.steer_vector, "layers": layers, "alpha": float(args.steer_alpha)}
+
+
+def _steer_slug(cfg: dict | None) -> str:
+    return "" if not cfg else f"-steer-{Path(cfg['vector']).stem}-a{cfg['alpha']:g}"
+
+
 def make_sampler(args):
     extra = json.loads(args.extra_body) if args.extra_body else None
     if args.sampler == "vllm":
@@ -58,7 +69,8 @@ def make_sampler(args):
         return VLLMOfflineSampler(model=args.model, max_tokens=args.max_tokens, temperature=args.temperature,
                                   top_p=args.top_p, max_model_len=args.max_model_len,
                                   gpu_memory_utilization=args.gpu_mem, tensor_parallel_size=args.tp,
-                                  chat_template_kwargs=ctk, seed=args.seed, max_num_seqs=args.max_num_seqs)
+                                  chat_template_kwargs=ctk, seed=args.seed, max_num_seqs=args.max_num_seqs,
+                                  steer=_steer_cfg(args))
     if args.sampler == "tinker":
         from forensics.samplers.tinker_sampler import TinkerSampler
         return TinkerSampler(base_model=args.model, renderer_name=args.renderer, max_tokens=args.max_tokens,
@@ -134,14 +146,15 @@ async def main_async(args):
     variant = get_variant(args.variant)
     sampler = make_sampler(args)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    slug = _slug(args.model) + ("" if args.variant == "default" else "-" + args.variant.replace("_", "-"))
+    slug = (_slug(args.model) + ("" if args.variant == "default" else "-" + args.variant.replace("_", "-"))
+            + _steer_slug(_steer_cfg(args)))
     run_dir = Path(args.run_dir) if args.run_dir else RUNS_ROOT / f"{slug}_{stamp}"
     run_dir.mkdir(parents=True, exist_ok=True)
     meta = {"model": args.model, "backend": args.sampler, "provider": None,
             "max_tokens": args.max_tokens, "reasoning_effort": args.renderer or args.extra_body or args.chat_template_kwargs or None}
     config = {"model": slug, "model_id": args.model, "backend": args.sampler, "provider": None,
               "task": "giraffes" if args.variant != "known_answer_un" else "un_member_states",
-              "variant": args.variant, "variant_description": variant.description,
+              "variant": args.variant, "variant_description": variant.description, "steer": _steer_cfg(args),
               "count": args.count, "target_max_tokens": args.max_tokens,
               "target_reasoning_effort": args.renderer or args.extra_body or args.chat_template_kwargs, "judge_model": args.judge_model,
               "temperature": args.temperature, "top_p": args.top_p, "sampler": sampler.describe()}
@@ -193,6 +206,10 @@ def main():
     ap.add_argument("--threshold", type=int, default=None, help="skip baseline judging and use this threshold")
     ap.add_argument("--variant", default="default", choices=sorted(VARIANTS),
                     help="prompt variant from forensics/variants.py (Layer-1 ablations)")
+    # activation steering (vllm_offline only): vector file from scripts/07_build_vector.py
+    ap.add_argument("--steer-vector", default=None, help="vectors/<kind>.pt; enables eager mode + residual-stream steering")
+    ap.add_argument("--steer-layers", default=None, help="comma list of layers (default: the vector's recommended layers)")
+    ap.add_argument("--steer-alpha", type=float, default=0.0, help="multiple of the raw mean-difference vector; sign = direction")
     ap.add_argument("--judge-model", default="claude-haiku-4-5")
     ap.add_argument("--judge-concurrency", type=int, default=16)
     # vllm

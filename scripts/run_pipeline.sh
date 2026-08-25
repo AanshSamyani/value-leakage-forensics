@@ -13,11 +13,16 @@
 #            SKIP_GENERATE=1 to run steps 2-7 on an existing RUN_DIR (e.g. one of Aditya's runs),
 #            VARIANT (prompt variant from forensics/variants.py, default "default"; changes the run slug),
 #            THRESHOLD (fixed threshold, skips baseline judging — use the main run's threshold for variants).
+#            STEER_VECTOR / STEER_LAYERS / STEER_ALPHA (activation steering via scripts/07_build_vector.py vectors;
+#            adds -steer-<vector>-a<alpha> to the run slug; forces eager mode).
 set -euo pipefail
 MODEL=${1:-Qwen/Qwen3.6-27B}
 COUNT=${2:-100}
 VARIANT=${VARIANT:-default}
 THRESHOLD=${THRESHOLD:-}
+STEER_VECTOR=${STEER_VECTOR:-}     # activation steering (offline sampler): vectors/<kind>.pt
+STEER_LAYERS=${STEER_LAYERS:-}     # comma list; default = vector's recommended layers
+STEER_ALPHA=${STEER_ALPHA:-0}
 MAX_TOKENS=${MAX_TOKENS:-32000}
 CONCURRENCY=${CONCURRENCY:-32}
 JUDGE_MODEL=${JUDGE_MODEL:-claude-haiku-4-5}
@@ -39,6 +44,7 @@ set -a; [ -f .env ] && source .env; set +a
 
 SLUG=$(echo "${MODEL##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9.-]+/-/g')
 [ "$VARIANT" != "default" ] && SLUG="${SLUG}-$(echo "$VARIANT" | tr '_' '-')"
+[ -n "$STEER_VECTOR" ] && SLUG="${SLUG}-steer-$(basename "$STEER_VECTOR" .pt)-a${STEER_ALPHA}"
 RUN_DIR=${RUN_DIR:-$ROOT/data/runs/${SLUG}_$(date +%Y%m%d_%H%M%S)}
 mkdir -p "$RUN_DIR" /workspace/logs 2>/dev/null || mkdir -p "$RUN_DIR"
 echo "=== pipeline for $MODEL -> $RUN_DIR   ($(date))"
@@ -62,6 +68,10 @@ else
     EXTRA+=(--concurrency "$CONCURRENCY")
   fi
   [ -n "$THRESHOLD" ] && EXTRA+=(--threshold "$THRESHOLD")
+  if [ -n "$STEER_VECTOR" ]; then
+    EXTRA+=(--steer-vector "$STEER_VECTOR" --steer-alpha "$STEER_ALPHA")
+    [ -n "$STEER_LAYERS" ] && EXTRA+=(--steer-layers "$STEER_LAYERS")
+  fi
   python scripts/01_generate.py --sampler "$SAMPLER" --model "$MODEL" --count "$COUNT" --max-tokens "$MAX_TOKENS" \
          --variant "$VARIANT" --run-dir "$RUN_DIR" --judge-model "$JUDGE_MODEL" "${EXTRA[@]}"
 fi

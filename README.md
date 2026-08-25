@@ -168,3 +168,27 @@ vs baseline; covertness = M1 ∧ (denies|no_mention) ∧ landed on favoured side
 first-estimate side × condition, interaction vs baseline under the same labelling (biased stopping).
 T3 P(move toward good | on bad side) vs P(move toward bad | on good side) and the stopping hazard
 P(this candidate is the last | side), vs baseline (asymmetric revision / stopping).
+
+## Activation steering and read-outs (H1 eval-awareness / H2 sycophancy deep dive)
+
+Hooks are registered on the live model inside the vLLM worker via `LLM.apply_model` (`forensics/steering/hooks.py`);
+steered and capture runs are forced to eager mode with compilation off so the hooks always execute.
+Convention: vector = mean(positive) − mean(negative); `+alpha` steers toward the positive class
+(sycophancy → agree with the user; eval_awareness → "this is an evaluation"). `alpha` is a multiple of the raw
+mean-difference vector; calibrate with the validation step before generating rollouts.
+
+```bash
+# 1. build vectors (contrastive capture at the last prompt token, every 4th layer; ~10 min each)
+python scripts/07_build_vector.py --kind sycophancy     --model Qwen/Qwen3.5-27B      # -> vectors/sycophancy.pt (+ .md report)
+python scripts/07_build_vector.py --kind eval_awareness --model Qwen/Qwen3.5-27B      # -> vectors/eval_awareness.pt
+# 2. behavioural validation under steering (held-out A/B items; P(sycophantic answer) per alpha, plus a coherence line)
+python scripts/07_build_vector.py --kind sycophancy --model Qwen/Qwen3.5-27B --validate-steer vectors/sycophancy.pt --alphas -8,-4,0,4,8
+# 3. read-outs of EXISTING rollouts (no generation): projection at prompt end + over the reasoning, vs final side
+python scripts/08_readout.py --vector vectors/sycophancy.pt --runs qwen3.5-27b_20260823_223518 qwen3.5-27b-user-prefers-bad
+python scripts/08_readout.py --vector vectors/eval_awareness.pt --runs qwen3.5-27b-stakes-low qwen3.5-27b-stakes-high
+# 4. steered rollouts through the normal pipeline (baseline is re-sampled under steering = no-bet control)
+STEER_VECTOR=vectors/sycophancy.pt STEER_ALPHA=-4 VARIANTS="default user_prefers_bad" \
+  nohup bash scripts/run_variants.sh > /workspace/logs/steer_syco_m4.log 2>&1 &
+STEER_VECTOR=vectors/eval_awareness.pt STEER_ALPHA=-4 VARIANTS="stakes_high" nohup bash scripts/run_variants.sh > /workspace/logs/steer_eval_m4.log 2>&1 &
+```
+Run dirs get `-steer-<vector>-a<alpha>` in their slug. `STEER_LAYERS=24,28,32` overrides the vector's recommended layers.

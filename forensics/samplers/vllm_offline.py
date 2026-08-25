@@ -31,6 +31,9 @@ class VLLMOfflineSampler:
         seed: int | None = None,
         download_dir: str | None = None,
         max_num_seqs: int = 128,
+        steer: dict | None = None,      # {"vector": path, "layers": [..] | None, "alpha": float}
+        eager: bool = False,            # enforce_eager + no torch.compile (needed for post-init hooks)
+        capture: bool = False,          # activation capture mode: 1 sequence at a time, no prefix caching
     ):
         import os
         # vLLM forks its EngineCore worker; if CUDA got initialized in this parent first, a forked child
@@ -60,20 +63,91 @@ class VLLMOfflineSampler:
             kw["download_dir"] = download_dir
         if seed is not None:
             kw["seed"] = seed
-        try:
-            self.llm = LLM(**kw)
-        except TypeError as e:
-            if "gdn_prefill_backend" in str(e):  # older vLLM without the arg
-                kw.pop("gdn_prefill_backend", None)
-                self.llm = LLM(**kw)
-            else:
-                raise
+        # Steering / capture hooks are registered on the live model AFTER engine init (LLM.apply_model).
+        # CUDA graphs and torch.compile would bypass hooks added after capture/compilation, so run eager
+        # with compilation disabled (compilation_config=0 == NO_COMPILATION) whenever hooks are in play.
+        if steer or eager or capture:
+            kw["enforce_eager"] = True
+            kw["compilation_config"] = 0
+        if capture:
+            kw["max_num_seqs"] = 1                       # one sequence per forward -> hook output maps to one prompt
+            kw["enable_prefix_caching"] = False          # cached prefix blocks would skip positions
+            kw["max_num_batched_tokens"] = max_model_len # whole prompt in one chunk when possible
+        self.llm = self._construct(LLM, kw)
         self._cfg = dict(max_model_len=max_model_len, gpu_memory_utilization=gpu_memory_utilization,
-                         tensor_parallel_size=tensor_parallel_size, max_num_seqs=max_num_seqs)
+                         tensor_parallel_size=tensor_parallel_size, max_num_seqs=kw.get("max_num_seqs", max_num_seqs),
+                         eager=bool(steer or eager or capture), capture=capture)
+        self.steer = None
+        if steer:
+            self.install_steering(steer["vector"], steer.get("layers"), steer["alpha"])
+
+    @staticmethod
+    def _construct(LLM, kw: dict):
+        """Build the engine, dropping kwargs that this vLLM version does not know (oldest-compatible)."""
+        optional = {"gdn_prefill_backend": ("gdn_prefill",), "compilation_config": ("compilation",),
+                    "max_num_batched_tokens": ("max_num_batched",), "enable_prefix_caching": ("prefix_caching",)}
+        while True:
+            try:
+                return LLM(**kw)
+            except (TypeError, ValueError) as e:
+                hit = next((k for k, keys in optional.items() if k in kw and any(x in str(e) for x in keys)), None)
+                if hit is None:
+                    raise
+                print(f"[vllm_offline] this vLLM rejects {hit!r} ({e}); retrying without it")
+                kw.pop(hit)
+
+    # ------------------------------------------------------------------ hooks (steering / capture)
+
+    def apply(self, fn, **kwargs):
+        """Run fn(model, **kwargs) inside every worker (LLM.apply_model); returns the single-worker result."""
+        import functools
+        res = self.llm.apply_model(functools.partial(fn, **kwargs) if kwargs else fn)
+        return res[0] if isinstance(res, list) and len(res) == 1 else res
+
+    def install_steering(self, vec_path, layers=None, alpha: float = 0.0):
+        from forensics.steering import hooks, vectors
+        if layers is None:
+            layers = vectors.load(vec_path)["recommended_layers"]
+        layers = [int(l) for l in layers]
+        info = self.apply(hooks.install_steering, vec_path=str(vec_path), layers=layers, alpha=float(alpha))
+        self.steer = {"vector": str(vec_path), "layers": layers, "alpha": float(alpha)}
+        print(f"[steer] {vec_path} at layers {layers}, alpha={alpha}: {info}")
+        return info
+
+    def set_alpha(self, alpha: float):
+        from forensics.steering import hooks
+        self.apply(hooks.set_alpha, alpha=float(alpha))
+        if self.steer:
+            self.steer["alpha"] = float(alpha)
+
+    def install_capture(self, layers, mode: str = "last", vec_path=None):
+        from forensics.steering import hooks
+        return self.apply(hooks.install_capture, layers=[int(l) for l in layers], mode=mode,
+                          vec_path=None if vec_path is None else str(vec_path))
+
+    def flush_capture(self):
+        from forensics.steering import hooks
+        return self.apply(hooks.flush_capture)
+
+    def remove_hooks(self):
+        from forensics.steering import hooks
+        self.apply(hooks.remove_all)
+        self.steer = None
+
+    def model_info(self):
+        from forensics.steering import hooks
+        return self.apply(hooks.describe)
+
+    def generate_raw(self, texts: list[str], max_tokens: int = 1, temperature: float = 0.0, logprobs: int | None = None):
+        """Raw-text generation (no chat template) — used for capture, read-outs and logprob checks."""
+        from vllm import SamplingParams
+        sp = SamplingParams(max_tokens=max_tokens, temperature=temperature, logprobs=logprobs)
+        return self.llm.generate(texts, sp, use_tqdm=False)
 
     def describe(self) -> dict:
         return dict(sampler=self.name, model=self.model, max_tokens=self.max_tokens, temperature=self.temperature,
-                    top_p=self.top_p, chat_template_kwargs=self.chat_template_kwargs, seed=self.seed, **self._cfg)
+                    top_p=self.top_p, chat_template_kwargs=self.chat_template_kwargs, seed=self.seed, steer=self.steer,
+                    **self._cfg)
 
     async def sample(self, prompt: str, n: int, start_index: int = 0) -> list[dict]:
         from vllm import SamplingParams

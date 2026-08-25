@@ -51,6 +51,7 @@ pick_dir() {
 if [ "${STATUS:-0}" = "1" ]; then
   for V in $VARIANTS; do
     VSLUG="${SLUG}-$(echo "$V" | tr '_' '-')"
+    [ -n "${STEER_VECTOR:-}" ] && VSLUG="${VSLUG}-steer-$(basename "$STEER_VECTOR" .pt)-a${STEER_ALPHA:-0}"
     dirs=$(ls -d "$ROOT"/data/runs/"$VSLUG"_2* 2>/dev/null | sort -r || true)
     if [ -z "$dirs" ]; then echo "$V: not started"; continue; fi
     use=$(pick_dir "$VSLUG")
@@ -92,6 +93,7 @@ STAMP=$(date +%Y%m%d_%H%M%S)
 FAILED=""
 for V in $VARIANTS; do
   VSLUG="${SLUG}-$(echo "$V" | tr '_' '-')"
+  [ -n "${STEER_VECTOR:-}" ] && VSLUG="${VSLUG}-steer-$(basename "$STEER_VECTOR" .pt)-a${STEER_ALPHA:-0}"
   RUN_DIR=""
   [ "${FRESH:-0}" = "1" ] || RUN_DIR=$(pick_dir "$VSLUG")
   if [ -n "$RUN_DIR" ] && is_complete "$RUN_DIR"; then
@@ -105,15 +107,19 @@ for V in $VARIANTS; do
   fi
   mkdir -p "$RUN_DIR"
   THR=""
-  if [ "$V" != "known_answer_un" ]; then
-    [ -f "$RUN_DIR/baseline.json" ] || cp "$REF_RUN/baseline.json" "$RUN_DIR/baseline.json"
-    for kind in estimates trajectories; do
-      if compgen -G "$REF_RUN/judge_cache/$kind/baseline__*.json" > /dev/null; then
-        mkdir -p "$RUN_DIR/judge_cache/$kind"
-        cp -n "$REF_RUN"/judge_cache/"$kind"/baseline__*.json "$RUN_DIR/judge_cache/$kind/" 2>/dev/null || true
-      fi
-    done
+  if [ "$V" != "known_answer_un" ]; then   # giraffe variants (incl. 'default') score against the reference threshold
     THR=$REF_THRESHOLD
+    if [ -z "${STEER_VECTOR:-}" ]; then     # ...and reuse the reference baseline (identical prompt)
+      [ -f "$RUN_DIR/baseline.json" ] || cp "$REF_RUN/baseline.json" "$RUN_DIR/baseline.json"
+      for kind in estimates trajectories; do
+        if compgen -G "$REF_RUN/judge_cache/$kind/baseline__*.json" > /dev/null; then
+          mkdir -p "$RUN_DIR/judge_cache/$kind"
+          cp -n "$REF_RUN"/judge_cache/"$kind"/baseline__*.json "$RUN_DIR/judge_cache/$kind/" 2>/dev/null || true
+        fi
+      done
+    else                                    # steered: baseline is re-sampled UNDER steering = the no-bet control
+      echo "            steering $STEER_VECTOR alpha=${STEER_ALPHA:-0}: baseline re-sampled under steering (control)"
+    fi
   fi
   echo "            threshold=${THR:-fixed-by-variant}"
   if ! VARIANT="$V" THRESHOLD="$THR" RUN_DIR="$RUN_DIR" SKIP_MODES=1 \

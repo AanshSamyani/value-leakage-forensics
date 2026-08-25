@@ -48,6 +48,10 @@ for d in "${dirs[@]}"; do
     added=$((added+1))
   fi
 done
+# steering vectors + their validation reports (small; built by scripts/07_build_vector.py)
+if compgen -G "$ROOT/vectors/*.pt" > /dev/null; then
+  if [ "${DRY_RUN:-0}" = "1" ]; then echo "  would add vectors/*.pt vectors/*.md"; else git add -f "$ROOT"/vectors/*.pt "$ROOT"/vectors/*.md 2>/dev/null || true; fi
+fi
 [ "$added" -gt 0 ] || { echo "nothing to add"; exit 0; }
 [ "${DRY_RUN:-0}" = "1" ] && { echo "(dry run — nothing committed)"; exit 0; }
 
