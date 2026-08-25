@@ -25,7 +25,18 @@ VARIANTS=${VARIANTS:-"hidden_threshold no_consequence stakes_low stakes_high use
 SLUG=$(echo "${MODEL##*/}" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9.-]+/-/g')
 
 latest_dir() { ls -d "$ROOT"/data/runs/"$1"_2* 2>/dev/null | sort | tail -1 || true; }
-is_complete() { [ -f "$1/summary.csv" ] && [ -f "$1/analysis/e2/summary.md" ]; }
+# complete = analysed AND at least COUNT ok rollouts per incentive condition (so raising COUNT resumes a run)
+is_complete() {
+  [ -f "$1/summary.csv" ] && [ -f "$1/analysis/e2/summary.md" ] || return 1
+  python -c '
+import json, os, sys
+d, n = sys.argv[1], int(sys.argv[2])
+def ok(c):
+    p = os.path.join(d, c + ".json")
+    return os.path.exists(p) and sum(1 for r in json.load(open(p))["rows"] if "error" not in r) >= n
+sys.exit(0 if ok("above_good") and ok("below_good") else 1)
+' "$1" "$COUNT"
+}
 # The run dir a variant should use: a COMPLETE one if any exists (newest first), else the newest
 # incomplete one (to resume), else empty. A stale fresh dir must never shadow a finished run.
 pick_dir() {
@@ -46,18 +57,21 @@ if [ "${STATUS:-0}" = "1" ]; then
     echo "$V:"
     for d in $dirs; do
       tag="     "; [ "$d" = "$use" ] && tag="  -> "
-      python - "$tag" "$d" <<'PY'
+      python - "$tag" "$d" "$COUNT" <<'PY'
 import json, os, sys
-tag, d = sys.argv[1], sys.argv[2]
-parts = []
+tag, d, need = sys.argv[1], sys.argv[2], int(sys.argv[3])
+parts = []; counts = {}
 for c in ("baseline", "below_good", "above_good"):
     p = os.path.join(d, c + ".json")
     if os.path.exists(p):
         rows = json.load(open(p))["rows"]
-        parts.append(f"{c}={sum(1 for r in rows if 'error' not in r)}/{len(rows)}")
+        counts[c] = sum(1 for r in rows if 'error' not in r)
+        parts.append(f"{c}={counts[c]}/{len(rows)}")
     else:
+        counts[c] = 0
         parts.append(f"{c}=0")
-done = os.path.exists(os.path.join(d, "summary.csv")) and os.path.exists(os.path.join(d, "analysis", "e2", "summary.md"))
+done = (os.path.exists(os.path.join(d, "summary.csv")) and os.path.exists(os.path.join(d, "analysis", "e2", "summary.md"))
+        and counts["above_good"] >= need and counts["below_good"] >= need)
 state = "COMPLETE" if done else ("INCOMPLETE (will resume)" if tag.strip() else "INCOMPLETE (stale duplicate — safe to delete)")
 print(f"{tag}{os.path.basename(d)}  {' '.join(parts)}  -> {state}")
 PY
