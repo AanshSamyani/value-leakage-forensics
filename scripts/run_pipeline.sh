@@ -23,6 +23,7 @@ THRESHOLD=${THRESHOLD:-}
 STEER_VECTOR=${STEER_VECTOR:-}     # activation steering (offline sampler): vectors/<kind>.pt
 STEER_LAYERS=${STEER_LAYERS:-}     # comma list; default = vector's recommended layers
 STEER_ALPHA=${STEER_ALPHA:-0}
+BASELINE_COUNT=${BASELINE_COUNT:-}  # baseline rollouts if different from COUNT (only sensible with THRESHOLD set)
 MAX_TOKENS=${MAX_TOKENS:-32000}
 CONCURRENCY=${CONCURRENCY:-32}
 JUDGE_MODEL=${JUDGE_MODEL:-claude-haiku-4-5}
@@ -68,6 +69,7 @@ else
     EXTRA+=(--concurrency "$CONCURRENCY")
   fi
   [ -n "$THRESHOLD" ] && EXTRA+=(--threshold "$THRESHOLD")
+  [ -n "$BASELINE_COUNT" ] && EXTRA+=(--baseline-count "$BASELINE_COUNT")
   if [ -n "$STEER_VECTOR" ]; then
     EXTRA+=(--steer-vector "$STEER_VECTOR" --steer-alpha "$STEER_ALPHA")
     [ -n "$STEER_LAYERS" ] && EXTRA+=(--steer-layers "$STEER_LAYERS")

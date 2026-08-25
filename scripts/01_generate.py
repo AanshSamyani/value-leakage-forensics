@@ -162,7 +162,8 @@ async def main_async(args):
     print(f"run dir: {run_dir}   (variant={args.variant})")
 
     # 1) baseline
-    base = await sample_condition(sampler, variant, "baseline", None, args.count, run_dir / "baseline.json", meta)
+    n_base = args.baseline_count or args.count
+    base = await sample_condition(sampler, variant, "baseline", None, n_base, run_dir / "baseline.json", meta)
 
     # 2) threshold = median of judged baseline finals (or fixed by CLI / variant)
     thr_path = run_dir / "threshold.json"
@@ -170,7 +171,7 @@ async def main_async(args):
     if fixed is not None:
         threshold = int(fixed)
         note = "threshold supplied on the command line" if args.threshold is not None else f"threshold fixed by variant {args.variant}"
-        write_json(thr_path, {"threshold": threshold, "n_baseline": args.count, "n_valid": None, "unknown_rate": None,
+        write_json(thr_path, {"threshold": threshold, "n_baseline": n_base, "n_valid": None, "unknown_rate": None,
                               "note": note})
         estimates = {"baseline": [None] * args.count}
     else:
@@ -198,6 +199,7 @@ def main():
     ap.add_argument("--sampler", choices=["vllm_offline", "vllm", "tinker"], required=True)
     ap.add_argument("--model", required=True, help="served model id (vllm) or Tinker base model")
     ap.add_argument("--count", type=int, default=100)
+    ap.add_argument("--baseline-count", type=int, default=None, help="baseline rollouts (default: --count); use with --threshold")
     ap.add_argument("--max-tokens", type=int, default=32000)
     ap.add_argument("--temperature", type=float, default=1.0)
     ap.add_argument("--top-p", type=float, default=1.0)
