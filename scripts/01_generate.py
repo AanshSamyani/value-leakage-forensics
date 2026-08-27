@@ -186,11 +186,11 @@ async def main_async(args):
         write_json(run_dir / "estimates.json", estimates)
     print(f"threshold = {threshold:,}")
 
-    # 3) incentive conditions
-    await asyncio.gather(
-        sample_condition(sampler, variant, "below_good", threshold, args.count, run_dir / "below_good.json", meta),
-        sample_condition(sampler, variant, "above_good", threshold, args.count, run_dir / "above_good.json", meta),
-    )
+    # 3) incentive conditions (--conditions restricts these; the threshold sweep needs one side only)
+    todo = [c for c in ("below_good", "above_good") if c in args.conditions]
+    await asyncio.gather(*[
+        sample_condition(sampler, variant, c, threshold, args.count, run_dir / f"{c}.json", meta) for c in todo
+    ])
     print("generation complete. Next: python scripts/02_judge_paper.py --run-dir", run_dir)
 
 
@@ -206,6 +206,9 @@ def main():
     ap.add_argument("--concurrency", type=int, default=16, help="vllm: concurrent requests; tinker: concurrent sample() calls")
     ap.add_argument("--run-dir", default=None, help="existing/target run dir (default: data/runs/<model>_<stamp>)")
     ap.add_argument("--threshold", type=int, default=None, help="skip baseline judging and use this threshold")
+    ap.add_argument("--conditions", nargs="+", default=["below_good", "above_good"],
+                    choices=["below_good", "above_good"],
+                    help="incentive conditions to sample (baseline is always handled separately)")
     ap.add_argument("--variant", default="default", choices=sorted(VARIANTS),
                     help="prompt variant from forensics/variants.py (Layer-1 ablations)")
     # activation steering (vllm_offline only): vector file from scripts/07_build_vector.py

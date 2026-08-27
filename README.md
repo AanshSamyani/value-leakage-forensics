@@ -121,6 +121,47 @@ nohup bash scripts/run_variants.sh > /workspace/logs/variants_$(date +%m%d_%H%M)
 The batch prints the `00_summary.py` command that compares bias across all variants when done.
 For E1 modes on a finished variant run: `SKIP_GENERATE=1 RUN_DIR=<dir> bash scripts/run_pipeline.sh <model>`.
 
+## Starter batch — items 1a–1g, one vLLM boot (`scripts/06_batch.py`)
+
+22 runs / 4,100 rollouts in a single engine boot: the 1b threshold sweep, the 1c bet-amount ladder,
+the 1d determinism ladder, 1e.1 (bet settles on the true value), 1f (drop "most accurate point
+estimate", two arms) and 1g (proportional payoff). The job list lives in `scripts/jobs_starter.py`
+as data — thresholds for 1b are computed from the reference run's baseline percentiles, so the
+ladder follows the data instead of hardcoded numbers.
+
+```bash
+python scripts/06_batch.py --dry-run          # print every prompt, no GPU — review before committing 8h
+nohup bash scripts/run_batch.sh > /workspace/logs/batch_$(date +%m%d_%H%M).log 2>&1 &
+# knobs: MODEL COUNT CHUNK MAX_TOKENS MAX_NUM_SEQS MAX_MODEL_LEN GPU_MEM TP
+#        ONLY="sweep-above q-sand"   SKIP_GENERATE=1   SKIP_JUDGE=1   FRESH=1
+```
+
+**All generation first, then all judging, one run at a time.** `run_batch.sh` runs `06_batch.py`
+(generation only) to completion, then loops `02_judge_paper.py` over every run dir from the manifest
+it wrote at `data/runs/batch_<stamp>.json`.
+
+Why a dedicated runner rather than 22 `01_generate.py` invocations: that would boot vLLM 22 times
+(~5 min each), and each `sample()` call submits 100 copies of one prompt and blocks on the slowest.
+On the reference run the longest rollout in a batch of 100 is ~1.6x the mean, so ~38% of every batch
+is spent draining a near-empty GPU. `06_batch.py` flattens everything into one queue of distinct
+prompts and feeds it in chunks of 400, paying that drain roughly once. ~8h vs ~12.7h.
+
+**Two waves, and only item 1d needs them.** 1d's threshold is the median of its *own* baseline, and
+that number is printed inside the incentive prompts — so those prompts cannot be written until the
+baselines exist. Wave 1 generates the four new baselines (400 rollouts), Haiku sets the medians, wave
+2 does the remaining 3,700. The engine stays loaded across the pause. Everything else uses the
+reference threshold and reuses the reference run's 100 baseline rollouts (byte-identical baseline
+prompt), so no other run generates a baseline — except 1f, whose phrase edits change the baseline
+prompt and which therefore samples its own so a distribution shift is visible rather than silent.
+
+**Reading the sweep.** The 1b runs generate a single incentive condition, so the two-sided `bias` is
+undefined for them; `00_summary.py` reports one-sided `p_biased[<cond>]` instead. Because the sweep
+thresholds *are* baseline percentiles, the null rate comes free — at T = baseline p90 the baseline
+P(above) is 0.10 by construction.
+
+Resumable: re-run `run_batch.sh`. Generation samples only missing rollouts; judging is cached per
+rollout. A crash at hour 7 costs one chunk.
+
 ## vLLM on RunPod (reference commands)
 
 ```bash

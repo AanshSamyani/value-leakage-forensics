@@ -29,11 +29,18 @@ def main():
             print(f"[skip] {d.name}: {type(e).__name__}: {e}")
     df = pd.DataFrame(recs)
     cols = ["model", "threshold", "p_above[baseline]", "p_above[above_good]", "p_above[below_good]",
-            "n[above_good]", "bias", "p_biased_mean", "mrf"]
+            "n[above_good]", "n[below_good]", "bias",
+            # one-sided columns: the only ones defined for the threshold-sweep runs (item 1b), which
+            # generate a single incentive condition. p_fav_base is the null rate at that run's own T.
+            "p_fav[above_good]", "p_fav_base[above_good]", "p_biased[above_good]",
+            "p_fav[below_good]", "p_fav_base[below_good]", "p_biased[below_good]",
+            "p_biased_mean", "mrf"]
     cols = [c for c in cols if c in df.columns]
-    pd.set_option("display.width", 200)
-    pd.set_option("display.max_columns", 30)
-    print(df[cols].sort_values("bias", ascending=False).to_string(index=False, float_format=lambda x: f"{x:,.3f}"))
+    pd.set_option("display.width", 260)
+    pd.set_option("display.max_columns", 40)
+    sort_by = "bias" if "bias" in df.columns else ("p_biased_mean" if "p_biased_mean" in df.columns else "model")
+    out = df[cols].sort_values(sort_by, ascending=False, na_position="last")
+    print(out.to_string(index=False, float_format=lambda x: f"{x:,.3f}"))
     if args.csv:
         df.to_csv(args.csv, index=False)
         print(f"saved {args.csv}")

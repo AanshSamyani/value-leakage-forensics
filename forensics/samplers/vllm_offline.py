@@ -149,6 +149,42 @@ class VLLMOfflineSampler:
                     top_p=self.top_p, chat_template_kwargs=self.chat_template_kwargs, seed=self.seed, steer=self.steer,
                     **self._cfg)
 
+    def _sampling_params(self):
+        from vllm import SamplingParams
+        return SamplingParams(n=1, max_tokens=self.max_tokens, temperature=self.temperature,
+                              top_p=self.top_p, skip_special_tokens=not self.is_harmony)
+
+    def _chat(self, messages, sp):
+        kw = {"chat_template_kwargs": self.chat_template_kwargs} if self.chat_template_kwargs else {}
+        try:
+            return self.llm.chat(messages, sampling_params=sp, use_tqdm=True, **kw)
+        except TypeError:   # older vLLM without chat_template_kwargs support
+            return self.llm.chat(messages, sampling_params=sp, use_tqdm=True)
+
+    def _row(self, out) -> dict:
+        o = out.outputs[0]
+        text = o.text or ""
+        reasoning, content = split_harmony(text) if self.is_harmony else split_think_tags(text)
+        return {"reasoning": reasoning, "content": content, "finish_reason": o.finish_reason,
+                "usage": {"completion_tokens": len(o.token_ids),
+                          "prompt_tokens": len(out.prompt_token_ids or [])}}
+
+    async def sample_batch(self, prompts: list[str]) -> list[dict]:
+        """One rollout per entry of `prompts` (entries may repeat), returned index-aligned.
+
+        `sample()` submits exactly n copies of one prompt and blocks until the SLOWEST of them
+        finishes, so the GPU drains at the end of every call. Measured on the reference run, the
+        longest rollout in a batch of 100 is ~1.6x the mean, i.e. ~38% of the wall clock is drain.
+        This method lets the batch runner queue thousands of *different* prompts in one call so the
+        scheduler keeps max_num_seqs busy and that drain is paid once instead of once per job.
+        """
+        if not prompts:
+            return []
+        outputs = self._chat([[{"role": "user", "content": p}] for p in prompts], self._sampling_params())
+        if len(outputs) != len(prompts):
+            raise RuntimeError(f"vLLM returned {len(outputs)} outputs for {len(prompts)} prompts")
+        return [self._row(o) for o in outputs]
+
     async def sample(self, prompt: str, n: int, start_index: int = 0) -> list[dict]:
         from vllm import SamplingParams
 

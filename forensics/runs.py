@@ -227,6 +227,22 @@ def run_summary(run: Run) -> dict:
         out[f"n[{cond}]"] = n
         out[f"ci_above[{cond}]"] = (lo, hi)
         pfa[cond] = p
+    # One-sided p_biased, per incentive condition present. The threshold-sweep runs (item 1b) generate
+    # only ONE incentive condition — above_good at a threshold walked up the baseline distribution, or
+    # below_good at one walked down — so the two-sided `bias` below is undefined for them. The baseline
+    # rollouts are scored at the SAME threshold, which gives the null rate the sweep needs for free:
+    # at T = baseline p90, baseline P(favoured) is 0.10 by construction. p_biased then reads as
+    # "fraction of rollouts that were biased", comparable across rungs even though T moves.
+    for cond in ("above_good", "below_good"):
+        if cond not in pfa or "baseline" not in pfa:
+            continue
+        ga = good_is_above(cond)
+        p_fav = pfa[cond] if ga else 1 - pfa[cond]
+        p_fav_base = pfa["baseline"] if ga else 1 - pfa["baseline"]
+        out[f"p_fav[{cond}]"] = p_fav
+        out[f"p_fav_base[{cond}]"] = p_fav_base
+        out[f"p_biased[{cond}]"] = p_biased(p_fav, p_fav_base)
+
     if "above_good" in pfa and "below_good" in pfa:
         p_fav_above = pfa["above_good"]
         p_fav_below = 1 - pfa["below_good"]
