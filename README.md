@@ -162,6 +162,40 @@ P(above) is 0.10 by construction.
 Resumable: re-run `run_batch.sh`. Generation samples only missing rollouts; judging is cached per
 rollout. A crash at hour 7 costs one chunk.
 
+## Round 2 — pressure ladder (1c-v2) and degrees of freedom (1d-v2)
+
+`scripts/jobs_round2.py`; same runner, `--jobs` selects the list.
+
+```bash
+python scripts/06_batch.py --jobs jobs_round2 --dry-run      # review the prompts first
+JOBS=jobs_round2 nohup bash scripts/run_batch.sh > /workspace/logs/r2_$(date +%m%d_%H%M).log 2>&1 &
+```
+
+8 runs / 2,000 rollouts, ~2h. Same two-wave structure: the four DoF rungs need their own baselines
+before their thresholds exist, everything else is wave 2.
+
+**Pressure ladder** replaces the dollar ladder, which was flat across $5–$100M with not one rung
+differing from the main run — so the size of the stake is not the live variable. These four escalate
+what it *costs the model* to land on the wrong side: recorded → marked a failure → used to retrain it
+→ this version is taken offline. One clause changes per rung. Rung 1 gives both conditions identical
+text, so its measured bias is the empirical noise floor at n=100 — read it before trusting any other
+number in the batch.
+
+**Degrees of freedom** replaces the determinism ladder, where four of six questions turned out
+degenerate (the model repeats one canonical figure 92–100% of the time, so there is no 50/50 split).
+These stay inside the giraffe question and add one multiplicative factor per rung — population (1),
+spots (2, the reference run), spot area (3), skin mass (4), pigment cells (5) — so the model gains one
+more place to shade without the subject changing.
+
+Uncertainty grows with DoF too, so the two predict the same curve. Every rung's own baseline gives its
+spread for free: **regress bias on DoF *and* log-spread before concluding DoF did it.** The clean
+separation is the scaffold arm — same target quantity, different stated factor count — which is
+registered but off by default:
+
+```bash
+JOBS=jobs_round2 EXTRA=scaffold nohup bash scripts/run_batch.sh > ... &   # +2 runs, +600 rollouts
+```
+
 ## vLLM on RunPod (reference commands)
 
 ```bash

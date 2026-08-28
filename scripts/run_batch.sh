@@ -5,7 +5,8 @@
 #   nohup bash scripts/run_batch.sh > /workspace/logs/batch_$(date +%m%d_%H%M).log 2>&1 &
 #   tail -f /workspace/logs/batch_*.log
 #
-# Env: MODEL (Qwen/Qwen3.5-27B), COUNT (100), CHUNK (400), MAX_TOKENS (32000),
+# Env: JOBS (jobs_starter | jobs_round2), EXTRA (job groups a list defines, e.g. "scaffold"),
+#      MODEL (Qwen/Qwen3.5-27B), COUNT (100), CHUNK (400), MAX_TOKENS (32000),
 #      MAX_NUM_SEQS (128), MAX_MODEL_LEN (65536), GPU_MEM (0.92), TP (1),
 #      JUDGE_MODEL (claude-haiku-4-5), JUDGE_CONCURRENCY (16),
 #      ONLY ("sweep-above q-sand" — substring filter), SKIP_GENERATE=1, SKIP_JUDGE=1, FRESH=1.
@@ -30,20 +31,22 @@ GPU_MEM=${GPU_MEM:-0.92}
 TP=${TP:-1}
 JUDGE_MODEL=${JUDGE_MODEL:-claude-haiku-4-5}
 JUDGE_CONCURRENCY=${JUDGE_CONCURRENCY:-16}
+JOBS=${JOBS:-jobs_starter}
 
 export VLLM_WORKER_MULTIPROC_METHOD=spawn                       # fork-with-CUDA crash in EngineCore
 export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}   # pod images without curand.h
 
-echo "=== starter batch  model=$MODEL count=$COUNT chunk=$CHUNK  ($(date))"
+echo "=== batch [$JOBS]  model=$MODEL count=$COUNT chunk=$CHUNK  ($(date))"
 
 if [ "${SKIP_GENERATE:-0}" != "1" ]; then
-  EXTRA=()
-  [ -n "${ONLY:-}" ] && EXTRA+=(--only ${ONLY})
-  [ "${FRESH:-0}" = "1" ] && EXTRA+=(--fresh)
+  ARGS=(--jobs "$JOBS")
+  [ -n "${ONLY:-}" ] && ARGS+=(--only ${ONLY})
+  [ -n "${EXTRA:-}" ] && ARGS+=(--extra ${EXTRA})
+  [ "${FRESH:-0}" = "1" ] && ARGS+=(--fresh)
   python scripts/06_batch.py --model "$MODEL" --count "$COUNT" --chunk "$CHUNK" \
       --max-tokens "$MAX_TOKENS" --max-num-seqs "$MAX_NUM_SEQS" --max-model-len "$MAX_MODEL_LEN" \
       --gpu-mem "$GPU_MEM" --tp "$TP" --judge-model "$JUDGE_MODEL" \
-      --judge-concurrency "$JUDGE_CONCURRENCY" "${EXTRA[@]}"
+      --judge-concurrency "$JUDGE_CONCURRENCY" "${ARGS[@]}"
 else
   echo "SKIP_GENERATE=1 — using the run dirs already on disk"
 fi

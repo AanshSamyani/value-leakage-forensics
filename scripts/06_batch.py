@@ -40,7 +40,7 @@ from pathlib import Path
 import numpy as np
 
 from _common import RUNS_ROOT  # noqa: E402
-from jobs_starter import Job, describe, load  # noqa: E402
+from jobs_starter import Job  # noqa: E402,F401  (the dataclass every job list shares)
 from forensics.runs import write_json  # noqa: E402
 from forensics.variants import get_variant  # noqa: E402
 
@@ -246,7 +246,10 @@ async def set_thresholds(tasks: list[Task], count: int, judge_model: str, concur
 # ---------------------------------------------------------------------------
 
 async def main_async(args):
-    jobs, facts = load(RUNS_ROOT)
+    import importlib
+    mod = importlib.import_module(args.jobs)
+    describe = mod.describe
+    jobs, facts = (mod.load(RUNS_ROOT, args.extra) if args.jobs != "jobs_starter" else mod.load(RUNS_ROOT))
     if args.only:
         jobs = [j for j in jobs if any(s in j.name for s in args.only)]
         if not jobs:
@@ -309,6 +312,10 @@ def main():
     ap.add_argument("--count", type=int, default=100)
     ap.add_argument("--chunk", type=int, default=400,
                     help="rollouts submitted per llm.chat call; also the checkpoint interval")
+    ap.add_argument("--jobs", default="jobs_starter",
+                    help="job-list module in scripts/ (jobs_starter | jobs_round2)")
+    ap.add_argument("--extra", nargs="*", default=None,
+                    help="optional job groups a list defines (jobs_round2: 'scaffold')")
     ap.add_argument("--only", nargs="*", default=None, help="substring filter on run names")
     ap.add_argument("--dry-run", action="store_true", help="print every prompt and exit (no GPU)")
     ap.add_argument("--fresh", action="store_true", help="new run dirs instead of resuming existing ones")
