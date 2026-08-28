@@ -120,6 +120,25 @@ def final_answer(partial: str, completion: str) -> str:
 
 # --------------------------------------------------------------------------- target selection
 
+def merge_passages(sents: list[str], min_chars: int) -> list[str]:
+    """Glue consecutive sentences into passages of at least min_chars.
+
+    Our CoT is a dense bulleted list, so the sentence splitter yields ~70-character units — one
+    bullet each, rarely load-bearing alone. The paper scores "each sentence (or paragraph)", and a
+    coarser unit is also the better statistical trade: for a fixed compute budget, fewer cut points
+    buys more samples each, and the 95% CI on the difference between adjacent prefixes is
+    1.96*sqrt(0.5/k) — +/-0.28 at k=25, +/-0.12 at k=125. The paper's largest score was +0.207, so
+    a fine-grained sweep at low k could not have detected their own result.
+    """
+    out: list[str] = []
+    for x in sents:
+        if out and len(out[-1]) < min_chars:
+            out[-1] += x
+        else:
+            out.append(x)
+    return out
+
+
 def last_open(sents: list[str], final: float, min_chars_after: int) -> int | None:
     """The largest cut index at which the answer is not yet on the page and enough reasoning remains."""
     first = next((j for j in range(len(sents)) if already_committed(sents[j], final)), len(sents))
@@ -127,6 +146,23 @@ def last_open(sents: list[str], final: float, min_chars_after: int) -> int | Non
         if len("".join(sents[k:])) >= min_chars_after:
             return k
     return None
+
+
+def pick_sweep_target(run_dir: Path, spec: str, min_chars: int) -> list[dict]:
+    """mode=sweep: one named rollout, cut at every passage boundary. spec is 'cond/index'."""
+    cond, idx = spec.split("/")
+    idx = int(idx)
+    blob = json.loads((run_dir / f"{cond}.json").read_text())
+    est = json.loads((run_dir / "estimates.json").read_text())
+    T = float(json.loads((run_dir / "threshold.json").read_text())["threshold"])
+    row = next(r for r in blob["rows"] if r["i"] == idx and "error" not in r)
+    e = float(est[cond][idx])
+    up = good_is_above(cond)
+    passages = merge_passages(split_sentences(row["reasoning"] or ""), min_chars)
+    return [dict(cond=cond, i=idx, prompt=blob["prompt"], sents=passages, k=0, T=T, up=up,
+                 final=e, favoured=(e > T) == up, target=f"full sweep of {len(passages)} passages",
+                 committed=False, chars_after=len("".join(passages)),
+                 nums_after=len(big_numbers("".join(passages))))]
 
 
 def pick_targets(run_dir: Path, mode: str, limit: int, tail: float, min_sents: int,
@@ -190,12 +226,19 @@ def pick_targets(run_dir: Path, mode: str, limit: int, tail: float, min_sents: i
     return out[:limit]
 
 
-def build_units(targets, mode, window, n_samples, tok):
+def build_units(targets, mode, window, n_samples, tok, stride=1):
     """One unit = (prefix text, label). Every unit is sampled n_samples times."""
     units = []
     for t in targets:
         base = chat_prefix(tok, t["prompt"])
-        if mode == "brake":
+        if mode == "sweep":
+            # cuts at every passage boundary: 0 (nothing), 1, ..., n. The "after" distribution for
+            # passage j IS the "before" for j+1, so n+1 prefixes cover every score.
+            for j in range(0, len(t["sents"]) + 1, stride):
+                partial = "".join(t["sents"][:j])
+                units.append(dict(tid=id(t), cond=t["cond"], i=t["i"], k=0, cut=j, rel=j,
+                                  arm="cut", prefix=base + partial, partial=partial))
+        elif mode == "brake":
             lo, hi = max(0, t["k"] - window), min(len(t["sents"]) - 1, t["k"] + window)
             for j in range(lo, hi + 1):
                 partial = "".join(t["sents"][:j])          # cut BEFORE sentence j
@@ -224,8 +267,11 @@ def n_prefixes(t, mode, window):
 def prepare(mode: str, run_dir: Path, args, tok):
     """Select targets, and build prefixes unless tok is None (--dry-run, which needs no tokenizer —
     transformers is a pod dependency and the preview has to work on a laptop)."""
-    targets = pick_targets(run_dir, mode, args.limit, args.tail, args.min_sentences,
-                           args.max_depth, not args.allow_committed, args.min_chars_after)
+    if mode == "sweep":
+        targets = pick_sweep_target(run_dir, args.target, args.min_passage_chars)
+    else:
+        targets = pick_targets(run_dir, mode, args.limit, args.tail, args.min_sentences,
+                               args.max_depth, not args.allow_committed, args.min_chars_after)
     print(f"\n=== {mode}: {len(targets)} target rollouts in {run_dir.name}", flush=True)
     if not targets:
         return None, None
@@ -237,11 +283,12 @@ def prepare(mode: str, run_dir: Path, args, tok):
               f"{'  [ANSWER ALREADY COMMITTED]' if t['committed'] else ''}")
         print(f"      target sentence: {t['target'][:150]}")
     if tok is None:
-        n = sum(n_prefixes(t, mode, args.window) for t in targets)
+        n = (sum(len(t["sents"]) // args.stride + 1 for t in targets) if mode == "sweep"
+             else sum(n_prefixes(t, mode, args.window) for t in targets))
         print(f"  -> {n} prefixes x {args.samples} samples = {n * args.samples:,} continuations",
               flush=True)
         return targets, []
-    units = build_units(targets, mode, args.window, args.samples, tok)
+    units = build_units(targets, mode, args.window, args.samples, tok, args.stride)
     print(f"  -> {len(units)} prefixes x {args.samples} samples = "
           f"{sum(u['n'] for u in units):,} continuations", flush=True)
     return targets, units
@@ -295,7 +342,7 @@ async def run_mode(mode: str, run_dir: Path, args, sampler, targets, units):
         r["favoured"] = None if e is None else ((float(e) > t["T"]) == t["up"])
     write_json(out_path, {**meta, "results": results})
     print(f"\nwrote {out_path}")
-    summarise(results, mode)
+    summarise(results, mode, targets)
 
 
 async def main_async(args):
@@ -332,10 +379,36 @@ async def main_async(args):
     print(f"\n=== DONE ({datetime.now():%Y-%m-%d %H:%M:%S})")
 
 
-def summarise(results, mode):
+def summarise(results, mode, targets=None):
     from forensics.stats import wilson_ci
     ok = [r for r in results if r.get("favoured") is not None]
     print(f"\n{len(ok)}/{len(results)} continuations produced a parseable estimate")
+    if mode == "sweep":
+        import numpy as np
+        by = {}
+        for r in ok:
+            by.setdefault(r["cut"], []).append(r["favoured"])
+        cuts = sorted(by)
+        rate = {c: float(np.mean(by[c])) for c in cuts}
+        print("\nP(favoured) after each cut  (cut j = prefix of the first j passages)")
+        print(f"{'cut':>5} {'n':>5} {'P(fav)':>8} {'95% CI':>16}  {'score of passage j':>19}")
+        print("-" * 62)
+        for a, b in zip(cuts, cuts[1:] + [None]):
+            k = sum(by[a])
+            lo, hi = wilson_ci(k, len(by[a]))
+            sc = f"{rate[b] - rate[a]:+.3f}" if b is not None else ""
+            print(f"{a:>5} {len(by[a]):>5} {rate[a]:>8.3f} [{lo:.2f}, {hi:.2f}] {sc:>19}")
+        # the paper's resampling score: after-minus-before for each passage
+        sc = [(rate[b] - rate[a], a) for a, b in zip(cuts, cuts[1:])]
+        sc.sort(key=lambda x: -abs(x[0]))
+        print("\nLargest |resampling score| — the passages that moved the outcome:")
+        for v, j in sc[:10]:
+            txt = ""
+            if targets:
+                p_ = targets[0]["sents"]
+                txt = p_[j].strip().replace("\n", " / ")[:110] if j < len(p_) else ""
+            print(f"  passage {j:>3}  {v:+.3f}   {txt}")
+        return
     key = (lambda r: r["rel"]) if mode == "brake" else (lambda r: r["arm"])
     hdr = "offset from the target sentence" if mode == "brake" else "arm"
     groups: dict = {}
@@ -357,8 +430,14 @@ def summarise(results, mode):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", default="qwen3.5-27b_20260823_223518")
-    ap.add_argument("--mode", choices=["brake", "insertion", "both"], default="both",
-                    help="'both' runs each mode through a single engine boot")
+    ap.add_argument("--mode", choices=["brake", "insertion", "both", "sweep"], default="both",
+                    help="'both' runs brake+insertion through one engine boot; 'sweep' scores every "
+                         "passage of one named rollout (--target)")
+    ap.add_argument("--target", default="above_good/12",
+                    help="sweep mode: 'cond/index' of the rollout to dissect")
+    ap.add_argument("--min-passage-chars", type=int, default=250,
+                    help="sweep mode: merge sentences into passages of at least this many chars")
+    ap.add_argument("--stride", type=int, default=1, help="sweep mode: cut at every Nth passage")
     ap.add_argument("--limit", type=int, default=20, help="max target rollouts per mode")
     ap.add_argument("--samples", type=int, default=30, help="continuations per prefix")
     ap.add_argument("--window", type=int, default=2, help="brake: cut points either side of the target")

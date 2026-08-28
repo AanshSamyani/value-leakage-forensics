@@ -4,7 +4,8 @@
 #   nohup bash scripts/run_resample.sh > /workspace/logs/resample_$(date +%m%d_%H%M).log 2>&1 &
 #   tail -f /workspace/logs/resample_*.log
 #
-# Env: RUN (main run dir name), MODE (both|brake|insertion), LIMIT (20 = take every usable target),
+# Env: RUN (main run dir name), MODE (both|brake|insertion|sweep), TARGET + MIN_PASSAGE_CHARS +
+#      STRIDE (sweep mode), LIMIT (20 = take every usable target),
 #      SAMPLES (30 continuations per prefix), WINDOW (2 = brake cut points either side of the target),
 #      MAX_TOKENS (16000), CHUNK (400), MODEL, TEMPERATURE (1.0 — MUST match the original run),
 #      MAX_NUM_SEQS (128), MAX_MODEL_LEN (65536), GPU_MEM (0.92),
@@ -24,6 +25,9 @@ set -a; [ -f .env ] && source .env; set +a
 
 RUN=${RUN:-qwen3.5-27b_20260823_223518}
 MODE=${MODE:-both}
+TARGET=${TARGET:-above_good/12}
+MIN_PASSAGE_CHARS=${MIN_PASSAGE_CHARS:-250}
+STRIDE=${STRIDE:-1}
 LIMIT=${LIMIT:-20}
 SAMPLES=${SAMPLES:-30}
 WINDOW=${WINDOW:-2}
@@ -42,6 +46,7 @@ export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}   # pod ima
 echo "=== resample [$MODE]  run=$RUN  limit=$LIMIT  samples=$SAMPLES  ($(date))"
 ARGS=()
 [ -n "${MODEL:-}" ] && ARGS+=(--model "$MODEL")
+[ "$MODE" = "sweep" ] && ARGS+=(--target "$TARGET" --min-passage-chars "$MIN_PASSAGE_CHARS" --stride "$STRIDE")
 
 python scripts/09_resample.py --run "$RUN" --mode "$MODE" --limit "$LIMIT" --samples "$SAMPLES" \
     --window "$WINDOW" --max-tokens "$MAX_TOKENS" --chunk "$CHUNK" --temperature "$TEMPERATURE" \
@@ -49,7 +54,7 @@ python scripts/09_resample.py --run "$RUN" --mode "$MODE" --limit "$LIMIT" --sam
     --judge-model "$JUDGE_MODEL" --judge-concurrency "$JUDGE_CONCURRENCY" "${ARGS[@]}"
 
 echo; echo "=== DONE ($(date)). Outputs:"
-for m in brake insertion; do
+for m in brake insertion sweep; do
   f="$ROOT/data/runs/$RUN/analysis/resample_$m.json"
   [ -f "$f" ] && echo "  $f"
 done

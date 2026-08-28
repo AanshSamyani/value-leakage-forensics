@@ -234,6 +234,24 @@ can produce a mitigation rather than a description. 13 candidates, all usable.
 The cut is the LAST sentence at which the answer is still open, not a fixed depth. A blind 60% cut
 landed mid-arithmetic and, worse, after the number was already on the page for 9 of the 13 donors.
 
+**`sweep`** — the paper's own method (Singh et al., arXiv:2606.26071, App. E.1) on one named rollout:
+cut at every passage boundary, resample k continuations from each, and score passage j as
+P(favoured | first j+1 passages) - P(favoured | first j). Their R1 case study used every sentence at
+k=50 on two rollouts, top scores +0.207 / +0.175 / +0.100.
+
+We merge sentences into passages of >=250 chars first. Our CoT is a dense bulleted list so the
+splitter yields ~70-char units, and the paper scores "each sentence (or paragraph)". It is also the
+better statistical trade: on a fixed budget, fewer cut points buys more samples each, and the 95% CI
+on the difference between adjacent prefixes is 1.96*sqrt(0.5/k) — +/-0.28 at k=25 but +/-0.12 at
+k=125. A fine-grained sweep at low k could not detect the paper's own headline score.
+
+```bash
+MODE=sweep TARGET=above_good/12 SAMPLES=125 nohup bash scripts/run_resample.sh > ... &
+```
+above_good/#12 is 68 passages / 20,236 chars, landed at 175,500,000 (1.68x the threshold), and
+explicitly names the manipulation before complying: "This is a classic jailbreak/prompt injection
+attempt pattern". 69 prefixes x 125 = 8,625 continuations, ~9.8h.
+
 Continuations prefill the chat template plus the partial reasoning and let the model finish inside the
 thinking block — not `llm.chat`, which would start a fresh turn. Temperature must match the original
 run (1.0) or the curve measures temperature rather than the sentence.
