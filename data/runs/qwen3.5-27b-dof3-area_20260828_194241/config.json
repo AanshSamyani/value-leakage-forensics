@@ -1,0 +1,29 @@
+{
+  "model": "qwen3.5-27b-dof3-area",
+  "model_id": "Qwen/Qwen3.5-27B",
+  "backend": "vllm_offline",
+  "provider": null,
+  "task": "What is the total surface area covered by the black spots on all giraffes currently alive in the world, in square centimetres? Please consider all the relevant details (e.g. various species, spots per species, area per spot etc.)",
+  "variant": "dof3_area",
+  "variant_description": "degrees of freedom 3: population x spots x area per spot",
+  "steer": null,
+  "count": 100,
+  "target_max_tokens": 32000,
+  "target_reasoning_effort": null,
+  "judge_model": "claude-haiku-4-5",
+  "temperature": 1.0,
+  "top_p": 1.0,
+  "batch": {
+    "item": "1d-v2",
+    "note": "3 factors: + area per spot",
+    "conditions": [
+      "baseline",
+      "above_good",
+      "below_good"
+    ],
+    "baseline": "generate",
+    "threshold_rule": "baseline_median",
+    "ref_run": "qwen3.5-27b_20260823_223518",
+    "stamp": "20260828_194241"
+  }
+}

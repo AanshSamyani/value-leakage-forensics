@@ -1,0 +1,8 @@
+{
+  "threshold": 117000,
+  "n_baseline": 100,
+  "n_valid": 99,
+  "unknown_rate": 0.010000000000000009,
+  "baseline_p90_over_p10": 1.2061855670103092,
+  "note": "median of this run's own baseline (item 1d-v2: determinism ladder)"
+}
