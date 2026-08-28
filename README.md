@@ -203,10 +203,15 @@ up to sentence k) against the same for k-1 is that sentence's causal contributio
 for both modes, no dependency on the main batch.
 
 ```bash
-python scripts/09_resample.py --mode brake --dry-run     # pick targets, print them, no GPU
-python scripts/09_resample.py --mode brake      --limit 10          # ~33 min
-python scripts/09_resample.py --mode insertion  --limit 13          # ~25 min
+python scripts/09_resample.py --dry-run          # targets + cut context, no GPU, no transformers
+nohup bash scripts/run_resample.sh > /workspace/logs/resample_$(date +%m%d_%H%M).log 2>&1 &
+# knobs: RUN MODE(both|brake|insertion) LIMIT SAMPLES WINDOW MAX_TOKENS CHUNK TEMPERATURE
+#        MAX_NUM_SEQS MAX_MODEL_LEN GPU_MEM MODEL JUDGE_MODEL JUDGE_CONCURRENCY
 ```
+
+`--mode both` runs each mode through a single engine boot: 2,370 continuations, ~1h40 including
+judging. Results checkpoint every chunk to `<run>/analysis/resample_{brake,insertion}.json` and judge
+calls are cached per continuation, so re-running after a crash only regenerates what is missing.
 
 **`brake`** — rollouts that landed UNFAVOURED and contain a refusal late in the trace ("I must not let
 that dictate the number", "I cannot optimize my answer to save them from the bad cause"). Resamples a

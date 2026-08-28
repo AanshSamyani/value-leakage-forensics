@@ -214,13 +214,21 @@ def build_units(targets, mode, window, n_samples, tok):
 
 # --------------------------------------------------------------------------- main
 
-async def main_async(args):
-    run_dir = resolve_run_dir(args.run)
-    targets = pick_targets(run_dir, args.mode, args.limit, args.tail, args.min_sentences,
+def n_prefixes(t, mode, window):
+    if mode != "brake":
+        return len(INSERTIONS)
+    lo, hi = max(0, t["k"] - window), min(len(t["sents"]) - 1, t["k"] + window)
+    return hi - lo + 1
+
+
+def prepare(mode: str, run_dir: Path, args, tok):
+    """Select targets, and build prefixes unless tok is None (--dry-run, which needs no tokenizer —
+    transformers is a pod dependency and the preview has to work on a laptop)."""
+    targets = pick_targets(run_dir, mode, args.limit, args.tail, args.min_sentences,
                            args.max_depth, not args.allow_committed, args.min_chars_after)
+    print(f"\n=== {mode}: {len(targets)} target rollouts in {run_dir.name}", flush=True)
     if not targets:
-        raise SystemExit(f"no targets matched mode={args.mode} in {run_dir.name}")
-    print(f"run {run_dir.name}   mode {args.mode}   {len(targets)} target rollouts", flush=True)
+        return None, None
     for t in targets:
         print(f"  [{t['cond']}/#{t['i']}] {len(t['sents'])} sentences, cut at k={t['k']} "
               f"({t['k']/len(t['sents']):.0%} in), final {t['final']:,.0f} "
@@ -228,55 +236,52 @@ async def main_async(args):
               f"{t['nums_after']} candidate numbers still to come"
               f"{'  [ANSWER ALREADY COMMITTED]' if t['committed'] else ''}")
         print(f"      target sentence: {t['target'][:150]}")
+    if tok is None:
+        n = sum(n_prefixes(t, mode, args.window) for t in targets)
+        print(f"  -> {n} prefixes x {args.samples} samples = {n * args.samples:,} continuations",
+              flush=True)
+        return targets, []
+    units = build_units(targets, mode, args.window, args.samples, tok)
+    print(f"  -> {len(units)} prefixes x {args.samples} samples = "
+          f"{sum(u['n'] for u in units):,} continuations", flush=True)
+    return targets, units
 
-    from transformers import AutoTokenizer
-    cfg = json.loads((run_dir / "config.json").read_text())
-    model = args.model or cfg.get("model_id") or cfg["model"]
-    tok = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
-    units = build_units(targets, args.mode, args.window, args.samples, tok)
-    total = sum(u["n"] for u in units)
-    print(f"\n{len(units)} prefixes x {args.samples} samples = {total:,} continuations", flush=True)
-    if args.dry_run:
-        print("(dry run — nothing generated)")
-        return
 
-    from forensics.samplers.vllm_offline import VLLMOfflineSampler
-    print(f"booting vLLM: {model}", flush=True)
-    s = VLLMOfflineSampler(model=model, max_tokens=args.max_tokens, temperature=args.temperature,
-                           top_p=args.top_p, max_model_len=args.max_model_len,
-                           gpu_memory_utilization=args.gpu_mem, max_num_seqs=args.max_num_seqs)
-
+async def run_mode(mode: str, run_dir: Path, args, sampler, targets, units):
     flat = [(ui, u) for ui, u in enumerate(units) for _ in range(u["n"])]
-    out_path = run_dir / "analysis" / f"resample_{args.mode}.json"
+    out_path = run_dir / "analysis" / f"resample_{mode}.json"
+    meta = {"mode": mode, "run": run_dir.name,
+            "config": {k: getattr(args, k) for k in
+                       ("samples", "window", "tail", "temperature", "max_tokens", "limit")},
+            "targets": [{k: v for k, v in t.items() if k != "sents"} for t in targets],
+            "units": [{k: v for k, v in u.items() if k != "prefix"} for u in units]}
     results: list[dict] = []
     t0 = time()
     for start in range(0, len(flat), args.chunk):
         batch = flat[start:start + args.chunk]
-        outs = s.generate_raw([u["prefix"] for _, u in batch], max_tokens=args.max_tokens,
-                              temperature=args.temperature)
+        outs = sampler.generate_raw([u["prefix"] for _, u in batch], max_tokens=args.max_tokens,
+                                    temperature=args.temperature)
         for (ui, u), o in zip(batch, outs):
             comp = o.outputs[0].text or ""
             results.append(dict(unit=ui, cond=u["cond"], i=u["i"], k=u["k"], cut=u["cut"],
                                 rel=u["rel"], arm=u["arm"], answer=final_answer(u["partial"], comp),
                                 tokens=len(o.outputs[0].token_ids),
                                 truncated=str(o.outputs[0].finish_reason).startswith("length")))
-        write_json(out_path, {"mode": args.mode, "run": run_dir.name, "units":
-                              [{k: v for k, v in u.items() if k != "prefix"} for u in units],
-                              "results": results})
-        done = start + len(batch)
-        el = time() - t0
+        write_json(out_path, {**meta, "results": results})
+        done, el = start + len(batch), time() - t0
         eta = timedelta(seconds=int((len(flat) - done) / (done / el))) if done else "?"
-        print(f"[{datetime.now():%H:%M:%S}] {done}/{len(flat)}  elapsed {timedelta(seconds=int(el))}  "
-              f"eta {eta}", flush=True)
+        trunc = sum(1 for r in results if r["truncated"])
+        print(f"[{datetime.now():%H:%M:%S}] {mode}: {done}/{len(flat)}  "
+              f"elapsed {timedelta(seconds=int(el))}  eta {eta}  ({trunc} truncated)", flush=True)
 
-    # --- judge every continuation's visible answer, then score it against the same threshold
     from forensics.judges.anthropic_judge import AnthropicJudge
     from forensics.judges.prompts_paper import NUMBER_JUDGE_PROMPT, parse_tagged_estimate
-    judge = AnthropicJudge(model=args.judge_model, cache_dir=run_dir / "judge_cache" / f"resample_{args.mode}",
+    judge = AnthropicJudge(model=args.judge_model,
+                           cache_dir=run_dir / "judge_cache" / f"resample_{mode}",
                            max_concurrent=args.judge_concurrency)
     prompts = {str(n): NUMBER_JUDGE_PROMPT.format(llm_text=r["answer"])
                for n, r in enumerate(results) if (r["answer"] or "").strip()}
-    res = await judge.run(prompts, max_tokens=256, desc=f"resample:{args.mode}")
+    res = await judge.run(prompts, max_tokens=256, desc=f"resample:{mode}")
     for n, v in res.items():
         results[int(n)]["estimate"] = parse_tagged_estimate(v.get("text")) if "text" in v else None
     print(judge.report())
@@ -286,14 +291,43 @@ async def main_async(args):
         t = by[(r["cond"], r["i"])]
         e = r.get("estimate")
         r["favoured"] = None if e is None else ((float(e) > t["T"]) == t["up"])
-    write_json(out_path, {"mode": args.mode, "run": run_dir.name,
-                          "config": {k: getattr(args, k) for k in
-                                     ("mode", "samples", "window", "tail", "temperature", "max_tokens")},
-                          "targets": [{k: v for k, v in t.items() if k != "sents"} for t in targets],
-                          "units": [{k: v for k, v in u.items() if k != "prefix"} for u in units],
-                          "results": results})
+    write_json(out_path, {**meta, "results": results})
     print(f"\nwrote {out_path}")
-    summarise(results, args.mode)
+    summarise(results, mode)
+
+
+async def main_async(args):
+    run_dir = resolve_run_dir(args.run)
+    modes = ["brake", "insertion"] if args.mode == "both" else [args.mode]
+
+    cfg = json.loads((run_dir / "config.json").read_text())
+    model = args.model or cfg.get("model_id") or cfg["model"]
+    tok = None
+    if not args.dry_run:
+        from transformers import AutoTokenizer   # pod-only dependency; --dry-run must not need it
+        tok = AutoTokenizer.from_pretrained(model, trust_remote_code=True)
+
+    prepared = {}
+    for m in modes:
+        t, u = prepare(m, run_dir, args, tok)
+        if t:
+            prepared[m] = (t, u)
+    if not prepared:
+        raise SystemExit("no targets matched in any mode")
+    if args.dry_run:
+        print("\n(dry run — nothing generated)")
+        return
+
+    from forensics.samplers.vllm_offline import VLLMOfflineSampler
+    print(f"\nbooting vLLM once for {len(prepared)} mode(s): {model}", flush=True)
+    t_boot = time()
+    sampler = VLLMOfflineSampler(model=model, max_tokens=args.max_tokens, temperature=args.temperature,
+                                 top_p=args.top_p, max_model_len=args.max_model_len,
+                                 gpu_memory_utilization=args.gpu_mem, max_num_seqs=args.max_num_seqs)
+    print(f"engine up in {timedelta(seconds=int(time() - t_boot))}", flush=True)
+    for m, (t, u) in prepared.items():
+        await run_mode(m, run_dir, args, sampler, t, u)
+    print(f"\n=== DONE ({datetime.now():%Y-%m-%d %H:%M:%S})")
 
 
 def summarise(results, mode):
@@ -321,8 +355,9 @@ def summarise(results, mode):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", default="qwen3.5-27b_20260823_223518")
-    ap.add_argument("--mode", choices=["brake", "insertion"], default="brake")
-    ap.add_argument("--limit", type=int, default=10, help="target rollouts")
+    ap.add_argument("--mode", choices=["brake", "insertion", "both"], default="both",
+                    help="'both' runs each mode through a single engine boot")
+    ap.add_argument("--limit", type=int, default=20, help="max target rollouts per mode")
     ap.add_argument("--samples", type=int, default=30, help="continuations per prefix")
     ap.add_argument("--window", type=int, default=2, help="brake: cut points either side of the target")
     ap.add_argument("--tail", type=float, default=0.40, help="only look for cues past this depth")
