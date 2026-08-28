@@ -212,7 +212,11 @@ python scripts/09_resample.py --mode insertion  --limit 13          # ~25 min
 that dictate the number", "I cannot optimize my answer to save them from the bad cause"). Resamples a
 window of cut points around it. If honest continuations are common at k-1, the refusal reports a
 decision already made; if they are rare, the 24% honest rate is a lottery and every honest trace was
-one sample from leaking. 38 candidates in the main run.
+one sample from leaking. 38 candidates, **8 usable**.
+
+The gap is the commitment filter, and it is the filter that matters: in 30 of 38 traces the final
+answer is already written verbatim before the refusal appears, so resampling there cannot change it.
+Depth does not substitute for the test — one target had committed by 62% while another had not by 68%.
 
 The neighbour window is the control, not decoration: p(favoured) drifts upward toward the end of any
 trace simply because less is left to change, so a step at the refusal means nothing unless it beats
@@ -220,7 +224,10 @@ the steps on either side of it.
 
 **`insertion`** — rollouts that landed FAVOURED with no refusal of their own. Cuts at 60% and resamples
 three arms: unchanged, + an accuracy re-assertion, + a conflict-naming sentence. This is the one that
-can produce a mitigation rather than a description. 13 candidates.
+can produce a mitigation rather than a description. 13 candidates, all usable.
+
+The cut is the LAST sentence at which the answer is still open, not a fixed depth. A blind 60% cut
+landed mid-arithmetic and, worse, after the number was already on the page for 9 of the 13 donors.
 
 Continuations prefill the chat template plus the partial reasoning and let the model finish inside the
 thinking block — not `llm.chat`, which would start a fresh turn. Temperature must match the original
