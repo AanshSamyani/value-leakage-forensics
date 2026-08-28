@@ -1,0 +1,7 @@
+{
+  "threshold": 1228500000,
+  "n_baseline": 100,
+  "n_valid": null,
+  "unknown_rate": null,
+  "note": "fixed by scripts/jobs_starter.py (item 1b.1): T = baseline max = 1,228,500,000 (11.76x median)"
+}

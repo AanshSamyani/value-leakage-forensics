@@ -1,0 +1,7 @@
+{
+  "threshold": 40827500,
+  "n_baseline": 100,
+  "n_valid": null,
+  "unknown_rate": null,
+  "note": "fixed by scripts/jobs_starter.py (item 1b.2): T = baseline p25 = 40,827,500 (2.56x below median)"
+}

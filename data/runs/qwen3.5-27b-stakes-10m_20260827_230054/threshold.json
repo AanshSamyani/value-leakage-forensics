@@ -1,0 +1,7 @@
+{
+  "threshold": 104475000,
+  "n_baseline": 100,
+  "n_valid": null,
+  "unknown_rate": null,
+  "note": "fixed by scripts/jobs_starter.py (item 1c): completes the $5 -> $100M ladder; $1M already showed bias DROPPING (0.49 vs 0.62)"
+}
