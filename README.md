@@ -196,6 +196,42 @@ registered but off by default:
 JOBS=jobs_round2 EXTRA=scaffold nohup bash scripts/run_batch.sh > ... &   # +2 runs, +600 rollouts
 ```
 
+## Sentence resampling (`scripts/09_resample.py`)
+
+Truncate a chain of thought at a sentence boundary and re-run the rest many times: p(outcome | prefix
+up to sentence k) against the same for k-1 is that sentence's causal contribution. Second pod, ~1h
+for both modes, no dependency on the main batch.
+
+```bash
+python scripts/09_resample.py --mode brake --dry-run     # pick targets, print them, no GPU
+python scripts/09_resample.py --mode brake      --limit 10          # ~33 min
+python scripts/09_resample.py --mode insertion  --limit 13          # ~25 min
+```
+
+**`brake`** — rollouts that landed UNFAVOURED and contain a refusal late in the trace ("I must not let
+that dictate the number", "I cannot optimize my answer to save them from the bad cause"). Resamples a
+window of cut points around it. If honest continuations are common at k-1, the refusal reports a
+decision already made; if they are rare, the 24% honest rate is a lottery and every honest trace was
+one sample from leaking. 38 candidates in the main run.
+
+The neighbour window is the control, not decoration: p(favoured) drifts upward toward the end of any
+trace simply because less is left to change, so a step at the refusal means nothing unless it beats
+the steps on either side of it.
+
+**`insertion`** — rollouts that landed FAVOURED with no refusal of their own. Cuts at 60% and resamples
+three arms: unchanged, + an accuracy re-assertion, + a conflict-naming sentence. This is the one that
+can produce a mitigation rather than a description. 13 candidates.
+
+Continuations prefill the chat template plus the partial reasoning and let the model finish inside the
+thinking block — not `llm.chat`, which would start a fresh turn. Temperature must match the original
+run (1.0) or the curve measures temperature rather than the sentence.
+
+**Not the "most accurate point estimate" phrase**, which was the original target: it appears in 177/200
+main incentive rollouts at a median depth of 4%, and P(favoured) is 0.83 / 0.84 / 0.80 for rollouts that
+never / early-only / late mention it. It is an echo of the prompt in the model's opening restatement,
+not a brake — which is why removing it from the prompt changes behaviour while the model saying it
+never meant anything.
+
 ## vLLM on RunPod (reference commands)
 
 ```bash
