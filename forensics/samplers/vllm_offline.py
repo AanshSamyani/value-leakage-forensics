@@ -138,11 +138,19 @@ class VLLMOfflineSampler:
         from forensics.steering import hooks
         return self.apply(hooks.describe)
 
-    def generate_raw(self, texts: list[str], max_tokens: int = 1, temperature: float = 0.0, logprobs: int | None = None):
-        """Raw-text generation (no chat template) — used for capture, read-outs and logprob checks."""
+    def generate_raw(self, texts: list[str], max_tokens: int = 1, temperature: float = 0.0,
+                     logprobs: int | None = None, top_p: float = 1.0, use_tqdm: bool = False):
+        """Raw-text generation (no chat template) — capture, read-outs, logprob checks, and
+        continuing a partially written assistant turn.
+
+        use_tqdm defaults False because read-outs call this once per prompt in a loop and a bar per
+        call is noise. Long batched generations should pass True: without it a chunk of hundreds of
+        continuations runs completely silently for many minutes, which is indistinguishable from a hang.
+        """
         from vllm import SamplingParams
-        sp = SamplingParams(max_tokens=max_tokens, temperature=temperature, logprobs=logprobs)
-        return self.llm.generate(texts, sp, use_tqdm=False)
+        sp = SamplingParams(max_tokens=max_tokens, temperature=temperature, top_p=top_p,
+                            logprobs=logprobs)
+        return self.llm.generate(texts, sp, use_tqdm=use_tqdm)
 
     def describe(self) -> dict:
         return dict(sampler=self.name, model=self.model, max_tokens=self.max_tokens, temperature=self.temperature,

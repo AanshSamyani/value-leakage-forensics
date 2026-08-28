@@ -259,8 +259,10 @@ async def run_mode(mode: str, run_dir: Path, args, sampler, targets, units):
     t0 = time()
     for start in range(0, len(flat), args.chunk):
         batch = flat[start:start + args.chunk]
+        print(f"[{datetime.now():%H:%M:%S}] {mode}: submitting {len(batch)} continuations "
+              f"({start + len(batch)}/{len(flat)})...", flush=True)
         outs = sampler.generate_raw([u["prefix"] for _, u in batch], max_tokens=args.max_tokens,
-                                    temperature=args.temperature)
+                                    temperature=args.temperature, top_p=args.top_p, use_tqdm=True)
         for (ui, u), o in zip(batch, outs):
             comp = o.outputs[0].text or ""
             results.append(dict(unit=ui, cond=u["cond"], i=u["i"], k=u["k"], cut=u["cut"],
@@ -374,7 +376,8 @@ def main():
     ap.add_argument("--temperature", type=float, default=1.0, help="MUST match the original run")
     ap.add_argument("--top-p", type=float, default=1.0)
     ap.add_argument("--max-tokens", type=int, default=16000)
-    ap.add_argument("--chunk", type=int, default=400)
+    ap.add_argument("--chunk", type=int, default=200,
+                    help="continuations per generate call; also the checkpoint and progress interval")
     ap.add_argument("--max-model-len", type=int, default=65536)
     ap.add_argument("--gpu-mem", type=float, default=0.92)
     ap.add_argument("--max-num-seqs", type=int, default=128)
