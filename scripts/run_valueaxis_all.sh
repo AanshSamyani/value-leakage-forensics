@@ -24,11 +24,25 @@ MAIN_PY=${MAIN_PY:-/workspace/venv/bin/python}
 # The value-axis venv exists to keep their repo's pins away from ours, but it lives outside
 # /workspace on some pods and does not survive a rebuild. Steps 1 and 3 only need torch +
 # transformers, both of which the main venv has, so fall back rather than fail the whole run.
-VA_PY=${VA_PY:-/workspace/value-axis/.venv/bin/python}
-if [ ! -x "$VA_PY" ]; then
-  echo "note: $VA_PY missing — using the main venv for the read-out steps"
+# The value-axis venv has moved between pods, so search rather than hard-code one path. It is
+# preferred over the main venv because the main one carries huggingface-hub 1.x, which is too new
+# for any real `accelerate` — pip resolves that conflict by installing the 0.0.1 stub, and
+# device_map="auto" then fails with the same error as having no accelerate at all.
+VA_PY=${VA_PY:-}
+if [ -z "$VA_PY" ]; then
+  for c in /workspace/value-axis/.venv/bin/python /workspace/value-axis/venv/bin/python \
+           /workspace/*/.venv/bin/python /workspace/*/venv/bin/python; do
+    [ -x "$c" ] || continue
+    [ "$c" = "$MAIN_PY" ] && continue
+    "$c" -c "import torch, transformers, accelerate" >/dev/null 2>&1 || continue
+    VA_PY=$c; break
+  done
+fi
+if [ -z "$VA_PY" ] || [ ! -x "$VA_PY" ]; then
+  echo "note: no value-axis venv with torch+transformers+accelerate found — trying the main venv"
   VA_PY=$MAIN_PY
 fi
+echo "read-out interpreter: $VA_PY"
 export HF_HOME=${HF_HOME:-/workspace/hf}
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ALLOW_INSECURE_SERIALIZATION=${VLLM_ALLOW_INSECURE_SERIALIZATION:-1}  # vLLM 0.28: apply_model uses msgpack, which cannot encode functools.partial
