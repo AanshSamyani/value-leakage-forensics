@@ -115,7 +115,7 @@ def main():
                 enc = tok(full, add_special_tokens=False, return_tensors="pt",
                           return_offsets_mapping=True, truncation=True, max_length=a.max_tokens)
                 offs = enc.pop("offset_mapping")[0].tolist()
-                grab.clear()
+                grab.clear(); gnorm.clear()   # keep the two dicts in step
                 model(enc["input_ids"].to(dev))
                 # char offset of each marker -> index of the token whose span contains it
                 starts = np.array([s for s, _ in offs])
@@ -128,6 +128,7 @@ def main():
                 np.savez_compressed(
                     out / f"{cond}_{r['i']:03d}.npz",
                     proj=np.stack([grab[li].numpy()[n_pre:] for li in layers]).astype(np.float16),
+                    hnorm=np.stack([gnorm[li].numpy()[n_pre:] for li in layers]).astype(np.float32),
                     layers=np.array(layers), vectors=np.array(names), events=np.array(ev, dtype=np.int32),
                     n_pre=n_pre, cond=cond, i=r["i"])
                 n_done += 1
