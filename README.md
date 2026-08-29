@@ -89,6 +89,10 @@ tail -f /workspace/logs/pipeline_qwen36.log
 summary (bias) → E2 → E1 mode judge → E1 analysis, writing to `data/runs/<model>_<stamp>/`.
 Each step is idempotent/resumable; to rerun from a step, call that script with `--run-dir <run dir>`.
 If the pod is recreated from the image, `/workspace` survives: `source /workspace/env.sh` and continue.
+**If it comes back on different hardware**, re-run `scripts/runpod_setup.sh` first. `/workspace` keeps a
+torch and a vLLM built for the previous host's CUDA, and neither carries the variant in its version
+number, so a plain `-U` upgrade is a no-op. Symptoms: `The NVIDIA driver on your system is too old`
+from vLLM's engine boot, or `ImportError: libcudart.so.13` from `import vllm`.
 Server mode is still available (`SAMPLER=vllm`, with `nohup bash scripts/serve_vllm.sh <model> > /workspace/logs/vllm.log 2>&1 &`
 started first) — useful later when several processes need the model (resampling).
 To run the judges + E2 + E1 on one of **Aditya's existing runs** (no GPU), fetch his data and skip generation:

@@ -30,6 +30,15 @@ pip install -e "$REPO_DIR"                 # anthropic, openai, numpy, pandas, s
 # vLLM + torch matched to THIS pod's NVIDIA driver (avoids "driver too old" when /workspace
 # outlives the pod and the next host has a different CUDA version):
 uv pip install -U --torch-backend=auto vllm
+# ...but -U alone is not enough on a host change. vLLM's version number does not encode the CUDA
+# variant, exactly like torchvision below, so -U is a no-op when the version is unchanged and the
+# cu130 _C extension survives a torch downgrade to cu129 — surfacing later as
+# "ImportError: libcudart.so.13: cannot open shared object file". Only pay the reinstall when the
+# import actually fails, so ordinary re-runs stay fast.
+if ! python -c "import vllm" >/dev/null 2>&1; then
+  echo "vllm does not import against the installed torch — reinstalling for this host's CUDA"
+  uv pip install --reinstall --torch-backend=auto vllm
+fi
 # torchaudio is never needed (transformers skips audio when absent) and a stale CUDA variant of it
 # breaks transformers' import; torchvision IS used by the Qwen-VL processor and its version number
 # does not change across CUDA variants, so -U is a no-op — force the matching build every time:
