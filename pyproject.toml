@@ -17,6 +17,10 @@ dependencies = [
 [project.optional-dependencies]
 # Needed only for scripts/01_generate.py --sampler tinker
 tinker = ["tinker", "tinker-cookbook"]
+# The HF read-out scripts (08b/08c) load the model with device_map="auto", which transformers
+# refuses to do without accelerate. torch/transformers themselves are installed per-host by
+# runpod_setup.sh against that pod's CUDA, so they are deliberately not pinned here.
+readout = ["accelerate>=0.30"]
 
 [build-system]
 requires = ["setuptools>=68"]
