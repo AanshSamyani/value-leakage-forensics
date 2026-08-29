@@ -69,6 +69,41 @@ import vllm
 print(f"vllm {vllm.__version__} import ok")
 PYCHECK
 
+# 2b) /workspace outlives the pod, so torch.compile and FlashInfer artifacts cached there can be
+# left over from a DIFFERENT GPU architecture when the volume is reattached to a new host. vLLM's
+# cache key does not reliably include the arch, and the failure is opaque when it comes — an illegal
+# memory access inside a compiled kernel, or a recompile storm that looks like a hang. Stamp the
+# compute capability and clear the compiled caches whenever it moves. Costs a few minutes of
+# recompilation on the first boot after a GPU change; costs nothing on an unchanged host.
+# `read` returns 1 at EOF, which under set -e would kill the script silently if the probe fails.
+read -r ARCH VRAM_GB NAME <<<"$(python - 2>/dev/null <<'PYARCH'
+import torch
+if torch.cuda.is_available():
+    cc = torch.cuda.get_device_capability()
+    pr = torch.cuda.get_device_properties(0)
+    print(f"{cc[0]}{cc[1]} {pr.total_memory / 1024**3:.0f} {pr.name}")
+else:
+    print("none 0 none")
+PYARCH
+)" || true
+ARCH=${ARCH:-none}; VRAM_GB=${VRAM_GB:-0}; NAME=${NAME:-unknown}
+STAMP=$WORKSPACE/.gpu_arch
+if [ "$ARCH" != "none" ]; then
+  PREV=$(cat "$STAMP" 2>/dev/null || echo unrecorded)
+  echo "GPU: $NAME  (sm$ARCH, ${VRAM_GB}GB) — previously sm$PREV"
+  if [ "$PREV" != "$ARCH" ]; then
+    echo "  architecture changed: clearing compiled kernel caches on the persistent volume"
+    rm -rf "$XDG_CACHE_HOME/vllm" "$XDG_CACHE_HOME/flashinfer" \
+           /root/.cache/vllm /root/.cache/flashinfer 2>/dev/null || true
+    echo "$ARCH" > "$STAMP"
+  fi
+  # Qwen3.5-27B is ~54GB in bf16; below ~64GB there is no room left for a usable KV cache.
+  if [ "$VRAM_GB" -lt 64 ]; then
+    echo "  WARNING: ${VRAM_GB}GB is not enough for a 27B model in bf16 on one card."
+    echo "           Use a bigger GPU, or pass TENSOR_PARALLEL across several."
+  fi
+fi
+
 # 3) data: Aditya's 10 runs (optional; FETCH_ADITYA=1 to include)
 if [ "${FETCH_ADITYA:-0}" = "1" ]; then bash "$REPO_DIR/scripts/fetch_aditya_runs.sh"; fi
 mkdir -p "$REPO_DIR/data/runs" /workspace/logs
