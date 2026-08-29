@@ -70,11 +70,19 @@ def main():
                              for _, b in blobs], dim=1).to(dev, torch.float32)
 
     grab: dict[int, torch.Tensor] = {}
+    gnorm: dict[int, torch.Tensor] = {}
 
     def mk(li):
         def hook(mod, args, o):
             h = o[0] if isinstance(o, tuple) else o     # HF: output[0] IS the post-layer stream
-            grab[li] = (h[0].detach().float() @ M[li]).cpu()
+            x = h[0].detach().float()
+            grab[li] = (x @ M[li]).cpu()
+            # ||h|| per token, so the paper's quantity can be recovered offline. Their eq. (2) is
+            # cos(h, v) averaged over tokens; M is unit-norm, so `grab` is ||h||*cos, and without
+            # the norm a condition that merely inflates the residual stream reads as a projection
+            # change. At layer 40 that is exactly what happens: the value axis and a norm-matched
+            # random direction both scale by ~1.05 between the no-bet and bet conditions.
+            gnorm[li] = x.norm(dim=-1).cpu()
         return hook
     handles = [model.model.layers[li].register_forward_hook(mk(li)) for li in layers]
 

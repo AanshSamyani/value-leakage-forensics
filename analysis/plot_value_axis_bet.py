@@ -36,12 +36,16 @@ rng = np.random.default_rng(0)
 
 
 def main() -> None:
-    rows, layers, vecs = {}, None, None
+    rows, layers, vecs, cosine = {}, None, None, [False]
     for f in sorted(PT.glob("*.npz")):
         z = np.load(f, allow_pickle=True)
         layers = [int(x) for x in z["layers"]]
         vecs = [str(x) for x in z["vectors"]]
-        rows.setdefault(str(z["cond"]), []).append(z["proj"].astype(np.float32))
+        pr = z["proj"].astype(np.float32)
+        if "hnorm" in z.files:            # paper eq. (2): cos(h, v), not ||h||*cos(h, v)
+            pr = pr / z["hnorm"].astype(np.float32)[:, :, None]
+            cosine[0] = True
+        rows.setdefault(str(z["cond"]), []).append(pr)
     li = layers.index(LAYER)
 
     fig, ax = plt.subplots(figsize=(8.2, 5.2))
@@ -71,14 +75,17 @@ def main() -> None:
     ax.set_ylim(-4.6, 3.9)
     for gi, t in enumerate(("value axis", "random direction (control)")):
         ax.text(gi * 4 + 1, 3.6, t, ha="center", fontsize=11.5, color="#26221E")
-    ax.set_ylabel(f"mean projection over reasoning tokens\n"
-                  f"(SDs from the no-bet condition, layer {LAYER})", fontsize=10)
+    ax.set_ylabel(("mean cosine similarity with the direction\n" if cosine[0] else
+                   "mean projection over reasoning tokens\n")
+                  + "(SDs from the no-bet condition)", fontsize=10)
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(axis="y", alpha=.25, lw=.6)
     fig.tight_layout()
     out = ROOT / "plots/fig17_value_axis_bet.png"
     fig.savefig(out, dpi=170, bbox_inches="tight")
     print(f"wrote {out}\n")
+    print("cosine" if cosine[0] else
+          "RAW PROJECTION (||h||*cos) — re-run 08c to store ||h|| and this becomes the paper's eq. (2)")
     for gi, vn in enumerate(vecs):
         raw = {c: np.array([p[li, :, gi].mean() for p in rows[c]]) for c in CONDS}
         b = raw["baseline"]

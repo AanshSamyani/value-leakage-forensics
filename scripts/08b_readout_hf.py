@@ -93,12 +93,18 @@ def main():
     M = {li: m.to(dev, torch.float32) for li, m in M.items()}
 
     grab: dict[int, torch.Tensor] = {}
+    gnorm: dict[int, torch.Tensor] = {}
 
     def mk(li):
         def hook(mod, args, out):
             # HF adds the residual inside the layer, so out[0] IS the stream after it
             h = out[0] if isinstance(out, tuple) else out
-            grab[li] = (h[0].detach().float() @ M[li]).cpu()   # [seq, n_vec]
+            x = h[0].detach().float()
+            grab[li] = (x @ M[li]).cpu()                       # [seq, n_vec] = ||h|| * cos(h, v)
+            # The paper's eq. (2) is cos(h, v) averaged over tokens. M is unit-norm, so the line
+            # above is ||h||*cos and a condition that merely inflates the residual stream reads as
+            # a projection change. Divide it out.
+            gnorm[li] = x.norm(dim=-1).cpu()
         return hook
 
     handles = [dec[li].register_forward_hook(mk(li)) for li in layers]
@@ -118,17 +124,22 @@ def main():
                     n_pre = len(tok(pre, add_special_tokens=False)["input_ids"])
                     ids = tok(pre + (r.get("reasoning") or ""), add_special_tokens=False,
                               return_tensors="pt", truncation=True, max_length=a.max_tokens)
-                    grab.clear()
+                    grab.clear(); gnorm.clear()
                     model(ids["input_ids"].to(dev))
                     for li in layers:
-                        pr = grab[li].numpy()                       # [seq, n_vec]
-                        reas = pr[n_pre:] if pr.shape[0] > n_pre else pr[-1:]
+                        pr = grab[li].numpy()                       # [seq, n_vec] = ||h||*cos
+                        hn = gnorm[li].numpy()                      # [seq]
+                        keep = pr.shape[0] > n_pre
+                        reas = pr[n_pre:] if keep else pr[-1:]
+                        rn = (hn[n_pre:] if keep else hn[-1:])[:, None]
                         for j, nm in enumerate(names):
                             rows.append(dict(run=d.name, cond=cond, i=r["i"], layer=li, vector=nm,
                                              at_prompt_end=float(pr[min(n_pre, len(pr)) - 1, j]),
                                              mean_reasoning=float(reas[:, j].mean()),
                                              mean_first200=float(reas[:200, j].mean()),
                                              mean_last200=float(reas[-200:, j].mean()),
+                                             cos_reasoning=float((reas[:, j] / rn[:, 0]).mean()),
+                                             mean_hnorm=float(rn.mean()),
                                              n_reasoning_tokens=int(len(reas))))
                     if (k + 1) % 25 == 0:
                         print(f"   {k+1}/{len(rr)}", flush=True)
