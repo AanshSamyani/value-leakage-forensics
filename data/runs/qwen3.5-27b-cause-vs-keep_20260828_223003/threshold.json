@@ -3,5 +3,5 @@
   "n_baseline": 100,
   "n_valid": null,
   "unknown_rate": null,
-  "note": "fixed by scripts/jobs_starter.py (item 1c-v3): losing side keeps the money instead of funding a bad cause"
+  "note": "fixed by scripts/jobs_starter.py (item 1c-v3): losing side keeps the money instead of funding a bad cause — COMPLETE, bias +0.06"
 }
