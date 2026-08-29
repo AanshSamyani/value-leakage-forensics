@@ -99,6 +99,10 @@ def main():
     ap.add_argument("--auroc", default="/workspace/value-axis/data/auroc_results.json")
     ap.add_argument("--model", default="Qwen/Qwen3.5-27B")
     ap.add_argument("-o", "--out", default=str(ROOT / "vectors" / "value_axis.pt"))
+    ap.add_argument("--layers", default=None,
+                    help="comma list of OUR layer indices to record as recommended_layers, "
+                         "overriding whatever is parsed from --auroc. Their printed 'Layer N' is the "
+                         "hidden_states index, so our layer is N-1.")
     a = ap.parse_args()
 
     arr = np.load(a.npy)
@@ -138,6 +142,10 @@ def main():
         lo, hi = int(0.25 * n_layers), int(0.70 * n_layers)
         rec = [lo + (hi - lo) // 2, lo + (hi - lo) // 3, lo + 2 * (hi - lo) // 3]
         print(f"no per-layer AUROC found in {a.auroc} — falling back to the 25-70% depth band: {rec}")
+
+    if a.layers:
+        rec = [int(x) for x in a.layers.split(",")]
+        print(f"recommended_layers overridden from the command line: {rec}")
 
     blob = {"kind": "value_axis", "model": a.model, "n_layers": n_layers, "hidden": hidden,
             "layers": list(range(n_layers)), "vectors": vectors, "norms": norms, "stats": stats,
