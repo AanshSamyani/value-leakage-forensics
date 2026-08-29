@@ -55,8 +55,13 @@ CACHED_LAYER=""
 [ -f "$CAL" ] && CACHED_LAYER=$("$MAIN_PY" -c "import json;print(json.load(open('$CAL'))['layer'])" 2>/dev/null || true)
 if [ "${FORCE_CAL:-0}" != "1" ] && { [ "${SKIP_CAL:-0}" = "1" ] || [ "$CACHED_LAYER" = "$STEER_LAYER" ]; }; then
   step "3/4  calibration reused from $CAL (layer $CACHED_LAYER) — nothing to recompute"
-  "$MAIN_PY" -c "import json;d=json.load(open('$CAL'));print('   mean||h||',round(d['h_norm'],1),
-'||v||',round(d['v_norm'],3));[print(f"   {k:>5}% -> alpha {v:.3f}") for k,v in d['alpha_by_pct'].items()]" || true
+  "$MAIN_PY" - "$CAL" <<'PYCAL' || true
+import json, sys
+d = json.load(open(sys.argv[1]))
+print(f"   layer {d['layer']}   mean||h|| {d['h_norm']:.1f}   ||v|| {d['v_norm']:.3f}")
+for k, v in sorted(d["alpha_by_pct"].items(), key=lambda kv: float(kv[0])):
+    print(f"   {float(k):>5.0f}% of ||h||  ->  alpha {v:+.4f}")
+PYCAL
 else
   step "3/4  calibrate alpha at layer $STEER_LAYER against the residual-stream norm"
   "$VA_PY" scripts/calibrate_steer_alpha.py --vector vectors/value_axis.pt --run "$RUN" \
@@ -72,7 +77,9 @@ else
     for SIGN in -1 1; do
       A=$("$MAIN_PY" -c "import json,sys; d=json.load(open('$CAL'));
 print(f\"{$SIGN*d['alpha_by_pct'][str(float($PCT))]:.4f}\")" 2>/dev/null) || continue
-      step "4/4  steering value_axis  layer $STEER_LAYER  ${SIGN}${PCT}% of ||h||  (alpha=$A)"
+      # ${SIGN}${PCT}% would print "-110%": SIGN is -1, not a sign character
+      LBL=$([ "$SIGN" -lt 0 ] && echo "-${PCT}" || echo "+${PCT}")
+      step "4/4  steering value_axis  layer $STEER_LAYER  ${LBL}% of ||h||  (alpha=$A)"
       STEER_VECTOR=vectors/value_axis.pt STEER_LAYERS="$STEER_LAYER" STEER_ALPHA="$A" \
       VARIANTS="default" REF_RUN="$REF" COUNT="$COUNT" \
         bash scripts/run_variants.sh || echo "!!! steering run FAILED at ${SIGN}${PCT}% — continuing"
