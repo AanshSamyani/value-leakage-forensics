@@ -45,16 +45,41 @@ PY="$VA_VENV/bin/python"
 # ...then force a torch build matched to THIS pod's driver. /workspace outlives the pod, so a torch
 # pinned by the lockfile can easily be wrong for the next host's CUDA version.
 uv pip install --python "$PY" -U --torch-backend=auto torch
-uv pip install --python "$PY" -U transformers accelerate numpy tqdm "huggingface_hub[cli]" safetensors
+uv pip install --python "$PY" -U transformers accelerate numpy tqdm huggingface_hub safetensors
+
+# torchvision has to be reinstalled AGAINST the torch we just installed. uv sync pins it from the
+# lockfile, and once torch is upgraded underneath it its compiled ops stop binding —
+# "RuntimeError: operator torchvision::nms does not exist". transformers 5.x imports torchvision
+# unconditionally from image_utils, so that failure takes the whole model-class import chain with it
+# and surfaces as the useless "Could not import module 'Qwen3_5ForCausalLM'".
+# Its version number does not change across CUDA variants, so -U is a no-op; --reinstall is required.
+# torchaudio is never needed here and a stale CUDA build of it breaks the same import path.
+uv pip install --python "$PY" --reinstall --torch-backend=auto torchvision
+uv pip uninstall --python "$PY" torchaudio >/dev/null 2>&1 || true
 
 echo "=== 3/4  sanity check"
-"$PY" - <<'PYCHECK'
-import torch, transformers
+# Exercises the exact import chain extract_activations.py needs. `import transformers` alone passes
+# even when torchvision is broken, because the model classes are lazy — the failure only appears at
+# AutoModelForCausalLM.from_pretrained, 15 minutes into a run.
+MODEL_CHECK=${MODEL:-Qwen/Qwen3.5-27B} "$PY" - <<'PYCHECK'
+import os, torch, transformers
 print(f"  torch {torch.__version__} (cuda {torch.version.cuda})  transformers {transformers.__version__}")
 if not torch.cuda.is_available():
     raise SystemExit("  torch cannot see the GPU — rerun this script or pick a pod with a newer driver")
 p = torch.cuda.get_device_properties(0)
 print(f"  {p.name}, {p.total_memory/1e9:.0f} GB")
+try:
+    import torchvision  # noqa: F401
+    torch.ops.torchvision.nms
+except Exception as e:
+    raise SystemExit(f"  torchvision is not bound to this torch ({type(e).__name__}: {e})\n"
+                     f"  fix: uv pip install --python $VA_VENV/bin/python --reinstall "
+                     f"--torch-backend=auto torchvision")
+import transformers.image_utils  # the import that dies when torchvision is stale
+from transformers import AutoConfig
+m = os.environ["MODEL_CHECK"]
+cfg = AutoConfig.from_pretrained(m)
+print(f"  {m}: {cfg.model_type}, {cfg.num_hidden_layers} layers, hidden {cfg.hidden_size} — import chain ok")
 PYCHECK
 
 echo "=== 4/4  env file"
