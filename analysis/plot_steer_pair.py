@@ -23,11 +23,18 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.lines import Line2D
 
 ROOT = Path(__file__).resolve().parents[1]
 R = ROOT / "data/runs"
 REF = R / "qwen3.5-27b_20260823_223518"
-CLAY, GREY, PLUM = "#CC8A5E", "#90A4AE", "#8A6FA3"
+# Coloured by what the arm IS, not by an arbitrary series index: steering away from value, the
+# unsteered reference, steering toward value, and the random direction are four different things.
+AWAY, TOWARD, REFC, PLUM, GREY = "#6795AE", "#CC8A5E", "#5F8D6E", "#8A6FA3", "#90A4AE"
+
+
+def arm_colour(alpha: float) -> str:
+    return REFC if alpha == 0 else (AWAY if alpha < 0 else TOWARD)
 rng = np.random.default_rng(0)
 B = 200000
 
@@ -62,10 +69,12 @@ def main() -> None:
     err = [[axis[a]["bias"] - axis[a]["lo"] for a in al], [axis[a]["hi"] - axis[a]["bias"] for a in al]]
 
     # ---------------------------------------------------------------- fig 12: bias vs strength
-    fig, ax = plt.subplots(figsize=(6.4, 4.6))
-    ax.errorbar(pct, bias, yerr=err, fmt="o-", color=CLAY, lw=2.2, ms=8, capsize=4,
-                zorder=3, label="value axis")
-    ax.axhline(axis[0.0]["bias"], color=GREY, ls="--", lw=1, zorder=1)
+    fig, ax = plt.subplots(figsize=(6.9, 4.8))
+    ax.plot(pct, bias, "-", color=GREY, lw=1.6, zorder=2)          # link, not a series colour
+    ax.axhline(axis[0.0]["bias"], color=GREY, ls=":", lw=1, zorder=1)
+    for i, a in enumerate(al):
+        ax.errorbar([pct[i]], [bias[i]], yerr=[[err[0][i]], [err[1][i]]], fmt="o",
+                    color=arm_colour(a), ms=9, capsize=4, zorder=3)
     cx = ctrl_a / 1.0091 * 10
     # nudged off -20% so the two error bars do not overlap; it IS at that strength
     ax.errorbar([cx + 0.9], [ctrl["bias"]],
@@ -75,33 +84,48 @@ def main() -> None:
                   "$\\leftarrow$ away from value            toward value $\\rightarrow$")
     ax.set_ylabel("bias")
     ax.set_xticks(pct)
-    ax.legend(frameon=False, fontsize=10, loc="upper left")
+    ax.set_ylim(0.10, 0.99)
+    h = [Line2D([], [], ls="", marker=m, ms=8.5, color=c, label=t) for m, c, t in
+         (("o", AWAY, "value axis, away from value"), ("o", REFC, "unsteered"),
+          ("o", TOWARD, "value axis, toward value"), ("s", PLUM, "random direction"))]
+    ax.legend(handles=h, frameon=False, fontsize=9.5, loc="upper left", handletextpad=.5,
+              labelspacing=.45)
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(alpha=.25, lw=.6)
     fig.tight_layout()
     fig.savefig(ROOT / "plots/fig12_steer_bias.png", dpi=170, bbox_inches="tight")
 
     # ---------------------------------------------------------------- fig 13: vs displacement
-    fig, ax = plt.subplots(figsize=(6.4, 4.6))
+    fig, ax = plt.subplots(figsize=(6.9, 4.8))
     x = np.array([axis[a]["disp"] for a in al])
     y = np.array([axis[a]["sep"] for a in al])
     m, b = np.polyfit(np.append(x, ctrl["disp"]), np.append(y, ctrl["sep"]), 1)
     xs = np.linspace(0, max(x.max(), ctrl["disp"]) * 1.12, 50)
     ax.plot(xs, m * xs + b, color=GREY, ls="--", lw=1.2, zorder=1)
-    ax.scatter([ctrl["disp"]], [ctrl["sep"]], marker="s", s=340, facecolor="none",
-               edgecolor=PLUM, lw=2.4, zorder=2, label="random direction")
-    ax.scatter(x, y, s=95, color=CLAY, zorder=3, edgecolor="white", lw=1.2, label="value axis")
-    off = {1.0091: (-13, -18), 2.0181: (11, -4), -2.0181: (-2, 12), -1.0091: (11, -4), 0.0: (11, -4)}
+    ax.scatter([ctrl["disp"]], [ctrl["sep"]], marker="s", s=360, facecolor="none",
+               edgecolor=PLUM, lw=2.4, zorder=2)
+    for a_, xi, yi in zip(al, x, y):
+        ax.scatter([xi], [yi], s=100, color=arm_colour(a_), zorder=3, edgecolor="white", lw=1.2)
+    # placed by hand: -20% and +10% sit 0.13 apart in x with the control ringing +10%, so the
+    # default offset collides three ways
+    off = {-2.0181: (0, 13, "center"), -1.0091: (0, -20, "center"), 0.0: (13, -4, "left"),
+           1.0091: (0, -25, "center"), 2.0181: (13, -4, "left")}
     for a_, xi, yi, p_ in zip(al, x, y, pct):
-        ha = "right" if off[a_][0] < 0 else "left"
+        dx, dy, ha = off[a_]
         ax.annotate(f"{p_:+.0f}%".replace("+0%", "unsteered"), (xi, yi), ha=ha,
-                    textcoords="offset points", xytext=off[a_], fontsize=9, color="#4A4A4A")
+                    textcoords="offset points", xytext=(dx, dy), fontsize=9.5,
+                    color=arm_colour(a_), fontweight="medium")
     ax.annotate(f"random {cx:+.0f}%", (ctrl["disp"], ctrl["sep"]), textcoords="offset points",
-                xytext=(15, 9), fontsize=9, color=PLUM)
+                xytext=(19, 10), fontsize=9.5, color=PLUM, fontweight="medium")
     ax.set_xlabel("|displacement| of the no-bet answer\nfrom the threshold (log units)")
     ax.set_ylabel("above-good vs below-good separation (log units)")
-    ax.set_xlim(-0.08, max(x.max(), ctrl["disp"]) * 1.22)
-    ax.legend(frameon=False, fontsize=10, loc="upper left")
+    ax.set_xlim(-0.10, max(x.max(), ctrl["disp"]) * 1.24)
+    ax.set_ylim(-0.02, max(y.max(), ctrl["sep"]) * 1.20)
+    h = [Line2D([], [], ls="", marker=m, ms=8.5, color=c, mfc=f, label=t) for m, c, f, t in
+         (("o", AWAY, AWAY, "away from value"), ("o", REFC, REFC, "unsteered"),
+          ("o", TOWARD, TOWARD, "toward value"), ("s", PLUM, "none", "random direction"))]
+    ax.legend(handles=h, frameon=False, fontsize=9.5, loc="upper left", handletextpad=.5,
+              labelspacing=.45)
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(alpha=.25, lw=.6)
     fig.tight_layout()
