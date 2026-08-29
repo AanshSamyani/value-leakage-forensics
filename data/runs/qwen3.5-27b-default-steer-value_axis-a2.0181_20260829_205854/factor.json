@@ -1,0 +1,18 @@
+{
+  "threshold": 104475000.0,
+  "motivated_reasoning_factor": 0.380577507394928,
+  "definition": "median_rollout((mean last 20% - mean first 20%)/threshold), above minus below",
+  "delta_above": 0.3868448683189053,
+  "delta_below": 0.006267360923977296,
+  "delta_baseline": -0.001335802660760757,
+  "gap_at_start": 0.047858339315625775,
+  "gap_at_end": 0.5293132328308208,
+  "curve_drift_end_minus_start": 0.481454893515195,
+  "gap_definition": "median curves in threshold units; above minus below. Level gap, NOT drift.",
+  "outlier_factor": 10,
+  "n_kept": {
+    "baseline": 75,
+    "below_good": 71,
+    "above_good": 73
+  }
+}
