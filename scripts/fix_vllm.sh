@@ -6,7 +6,7 @@
 # vllm 0.28.0 ships a cu130-only extension — "ImportError: libcudart.so.13". --torch-backend only
 # steers torch's index, not vLLM's own compiled extension, so the fix is to walk back releases until
 # one imports.
-set -euo pipefail
+set -uo pipefail   # NOT -e: a failing probe must fall through to the next version
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 PY=${PY:-python}
 if $PY -c "import vllm" >/dev/null 2>&1; then
@@ -14,10 +14,13 @@ if $PY -c "import vllm" >/dev/null 2>&1; then
 fi
 echo "vllm does not import against the installed torch — walking back releases"
 $PY -c "import torch; print('  torch', torch.__version__, 'cuda', torch.version.cuda)"
-for V in ${VLLM_VERSIONS:-"0.27.1 0.27.0 0.26.2 0.25.1"}; do
+# NB: no quotes inside ${:-} — quoting there suppresses word-splitting and the whole list becomes a
+# single $V, which then produces "ambiguous redirect" on the log path.
+for V in ${VLLM_VERSIONS:-0.27.1 0.27.0 0.26.2 0.25.1 0.24.1}; do
   echo; echo "=== trying vllm==$V"
-  if ! uv pip install --reinstall --torch-backend=auto "vllm==$V" >/tmp/vllm_$V.log 2>&1; then
-    echo "  install failed (tail of log):"; tail -4 /tmp/vllm_$V.log; continue
+  LOG="/tmp/vllm_${V}.log"
+  if ! uv pip install --reinstall --torch-backend=auto "vllm==$V" >"$LOG" 2>&1; then
+    echo "  install failed (tail of log):"; tail -n 4 "$LOG"; continue
   fi
   if $PY -c "import vllm; print('  imports ok:', vllm.__version__)" 2>/dev/null; then
     $PY -c "import torch; assert torch.cuda.is_available(); torch.zeros(1).cuda(); print('  cuda ok')"
