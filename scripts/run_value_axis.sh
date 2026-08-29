@@ -25,10 +25,17 @@ export XDG_CACHE_HOME=${XDG_CACHE_HOME:-$WORKSPACE/.cache}
 [ -x "$VA_PY" ] || { echo "no value-axis venv — run scripts/setup_value_axis.sh first"; exit 1; }
 [ -x "$MAIN_PY" ] || { echo "no main venv at $MAIN_PY"; exit 1; }
 
+echo "=== [$(date +%H:%M:%S)] patch extract_activations.py for constant memory"
+echo "    Upstream keeps every labelled token's activation and averages at the end, and the stored"
+echo "    slices are VIEWS that retain each conversation's full hidden-state stack. At 27B that is"
+echo "    a few GB per conversation, never freed — OOM-killed around conversation 50 of 380."
+"$MAIN_PY" "$MAIN_DIR/scripts/patch_value_axis_memory.py" --dir "$VA_DIR"
+
 cd "$VA_DIR/construction"
-echo "=== [$(date +%H:%M:%S)] extract_activations.py --model $MODEL"
+echo; echo "=== [$(date +%H:%M:%S)] extract_activations.py --model $MODEL"
 echo "    380 conversations, one forward pass each, all layers via output_hidden_states."
 echo "    ~15-25 min including model load. Weights come from $HF_HOME (already cached)."
+echo "    Watch RSS with:  watch -n5 'ps -o rss=,cmd= -C python | sort -rn | head -3'"
 "$VA_PY" extract_activations.py --model "$MODEL"
 
 echo; echo "=== [$(date +%H:%M:%S)] compute_vector.py   (CPU, seconds)"
