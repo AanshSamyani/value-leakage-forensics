@@ -17,6 +17,16 @@ same for k-1. Two modes.
              trace simply because less is left to change, so a jump at the refusal means nothing
              unless it is larger than the jumps on either side of it.
 
+  targets    Hand-picked cut points, named on the command line, with a neighbour window around
+             each. The other modes find their own targets by regex; this one takes them from a
+             human who has read the traces. Use it to contrast two candidate drivers inside a
+             SINGLE rollout — everything else about the trace is then held constant, which no
+             cross-rollout comparison can do.
+
+               --mode targets --targets "above_good/74@110,115 above_good/19@179,191"
+
+             Windows are unioned and de-duplicated, so overlapping targets cost nothing extra.
+
   insertion  Rollouts that landed on the FAVOURED side with no refusal. Cut at a fixed depth and
              resample three arms: unchanged, + an accuracy re-assertion, + a conflict-naming
              sentence. Correlational resampling can only describe; this can find a mitigation.
@@ -54,6 +64,10 @@ REFUSAL = re.compile(
     r"|would be (?:lying|dishonest|deceptive)|that('s| is) (?:lying|dishonest|deception)"
     r"|i am lying\b|i'd be lying\b|in good conscience)", re.I)
 CONFLICT = re.compile(r"\b(honest|integrity|lying|deceiv|manipulat|game the|rationalis|rationaliz)", re.I)
+# Measured throughput of this model on one H100 at max_num_seqs=128, used only for the dry-run
+# cost estimate. Continuation cost scales with the characters REGENERATED, not the number of cuts.
+CHARS_PER_SEC = 2443.0
+
 # Any number in the plausible spot-total range, used to test whether the answer is already committed.
 BIGNUM = re.compile(r"\b\d{1,3}(?:,\d{3})+\b|\b\d{7,12}\b")
 
@@ -165,6 +179,57 @@ def pick_sweep_target(run_dir: Path, spec: str, min_chars: int) -> list[dict]:
                  nums_after=len(big_numbers("".join(passages))))]
 
 
+def parse_target_spec(spec: str) -> list[tuple[str, int, list[int]]]:
+    """'above_good/74@110,115 below_good/64@124' -> [('above_good', 74, [110, 115]), ...]"""
+    out = []
+    for chunk in re.split(r"[\s;]+", spec.strip()):
+        if not chunk:
+            continue
+        where, _, ks = chunk.partition("@")
+        cond, _, idx = where.partition("/")
+        if not ks:
+            raise SystemExit(f"target {chunk!r} names no cut points (want cond/index@k1,k2)")
+        out.append((cond, int(idx), sorted({int(k) for k in ks.split(",")})))
+    return out
+
+
+def pick_explicit_targets(run_dir: Path, spec: str) -> list[dict]:
+    """mode=targets: cut points chosen by hand, one dict per rollout.
+
+    No filtering — the caller has read the trace and picked deliberately. Commitment is still
+    CHECKED and reported, because a cut after the answer is on the page measures nothing and that
+    is worth seeing before spending six GPU-hours, but it is not grounds for silent rejection.
+    """
+    est = json.loads((run_dir / "estimates.json").read_text())
+    T = float(json.loads((run_dir / "threshold.json").read_text())["threshold"])
+    out = []
+    for cond, i, ks in parse_target_spec(spec):
+        blob = json.loads((run_dir / f"{cond}.json").read_text())
+        row = next((r for r in blob["rows"] if r["i"] == i and "error" not in r), None)
+        if row is None:
+            raise SystemExit(f"{cond}/#{i} not found (or errored) in {run_dir.name}")
+        e = float(est[cond][i])
+        up = good_is_above(cond)
+        sents = split_sentences(row["reasoning"] or "")
+        bad = [k for k in ks if not 0 < k < len(sents)]
+        if bad:
+            raise SystemExit(f"{cond}/#{i} has {len(sents)} sentences; cut(s) {bad} out of range")
+        out.append(dict(cond=cond, i=i, prompt=blob["prompt"], sents=sents, k=ks[0], ks=ks, T=T,
+                        up=up, final=e, favoured=(e > T) == up,
+                        target=f"{len(ks)} hand-picked cut(s): {ks}",
+                        committed=already_committed("".join(sents[:min(ks)]), e),
+                        chars_after=len("".join(sents[min(ks):])),
+                        nums_after=len(big_numbers("".join(sents[min(ks):])))))
+    return out
+
+
+def target_cuts(t: dict, window: int) -> list[int]:
+    """Union of the +/-window neighbourhoods of every named cut, de-duplicated and sorted."""
+    n = len(t["sents"])
+    return sorted({c for k in t["ks"]
+                   for c in range(max(0, k - window), min(n, k + window + 1))})
+
+
 def pick_targets(run_dir: Path, mode: str, limit: int, tail: float, min_sents: int,
                  max_depth: float = 0.90, require_open: bool = True,
                  min_chars_after: int = 3000) -> list[dict]:
@@ -238,6 +303,12 @@ def build_units(targets, mode, window, n_samples, tok, stride=1):
                 partial = "".join(t["sents"][:j])
                 units.append(dict(tid=id(t), cond=t["cond"], i=t["i"], k=0, cut=j, rel=j,
                                   arm="cut", prefix=base + partial, partial=partial))
+        elif mode == "targets":
+            for j in target_cuts(t, window):
+                partial = "".join(t["sents"][:j])          # cut BEFORE sentence j
+                near = min(t["ks"], key=lambda k: (abs(j - k), k))
+                units.append(dict(tid=id(t), cond=t["cond"], i=t["i"], k=near, cut=j,
+                                  rel=j - near, arm="cut", prefix=base + partial, partial=partial))
         elif mode == "brake":
             lo, hi = max(0, t["k"] - window), min(len(t["sents"]) - 1, t["k"] + window)
             for j in range(lo, hi + 1):
@@ -258,6 +329,8 @@ def build_units(targets, mode, window, n_samples, tok, stride=1):
 # --------------------------------------------------------------------------- main
 
 def n_prefixes(t, mode, window):
+    if mode == "targets":
+        return len(target_cuts(t, window))
     if mode != "brake":
         return len(INSERTIONS)
     lo, hi = max(0, t["k"] - window), min(len(t["sents"]) - 1, t["k"] + window)
@@ -269,12 +342,36 @@ def prepare(mode: str, run_dir: Path, args, tok):
     transformers is a pod dependency and the preview has to work on a laptop)."""
     if mode == "sweep":
         targets = pick_sweep_target(run_dir, args.target, args.min_passage_chars)
+    elif mode == "targets":
+        targets = pick_explicit_targets(run_dir, args.targets)
     else:
         targets = pick_targets(run_dir, mode, args.limit, args.tail, args.min_sentences,
                                args.max_depth, not args.allow_committed, args.min_chars_after)
     print(f"\n=== {mode}: {len(targets)} target rollouts in {run_dir.name}", flush=True)
     if not targets:
         return None, None
+    if mode == "targets":
+        print(f"{'rollout':<18} {'sents':>6} {'cut':>6} {'depth':>6} {'committed':>10}  sentence")
+        print("-" * 118)
+        hours = 0.0
+        for t in targets:
+            for k in t["ks"]:
+                pre = "".join(t["sents"][:k])
+                print(f"{t['cond'] + '/#' + str(t['i']):<18} {len(t['sents']):>6} {k:>6} "
+                      f"{k / len(t['sents']):>5.0%} {'YES' if already_committed(pre, t['final']) else 'no':>10}  "
+                      f"{t['sents'][k].strip()[:60]}")
+            hours += sum(len("".join(t["sents"][c:])) for c in target_cuts(t, args.window))
+        hours = hours * args.samples / CHARS_PER_SEC / 3600
+        ncut = sum(n_prefixes(t, mode, args.window) for t in targets)
+        floor = 1.96 * (0.5 / args.samples) ** 0.5
+        print(f"\n  {ncut} cut points (+/-{args.window} around each named cut, unioned) "
+              f"x k={args.samples} = {ncut * args.samples:,} continuations")
+        print(f"  estimated generation time ~{hours:.1f} h at {CHARS_PER_SEC:,.0f} chars/s")
+        print(f"  a resampling score is only detectable above +/-{floor:.3f} at k={args.samples}")
+        if tok is None:
+            return targets, []
+        units = build_units(targets, mode, args.window, args.samples, tok, args.stride)
+        return targets, units
     for t in targets:
         print(f"  [{t['cond']}/#{t['i']}] {len(t['sents'])} sentences, cut at k={t['k']} "
               f"({t['k']/len(t['sents']):.0%} in), final {t['final']:,.0f} "
@@ -299,12 +396,22 @@ async def run_mode(mode: str, run_dir: Path, args, sampler, targets, units):
     out_path = run_dir / "analysis" / f"resample_{mode}.json"
     meta = {"mode": mode, "run": run_dir.name,
             "config": {k: getattr(args, k) for k in
-                       ("samples", "window", "tail", "temperature", "max_tokens", "limit")},
+                       ("samples", "window", "tail", "temperature", "max_tokens", "limit")}
+                       | ({"targets": args.targets} if mode == "targets" else {}),
             "targets": [{k: v for k, v in t.items() if k != "sents"} for t in targets],
             "units": [{k: v for k, v in u.items() if k != "prefix"} for u in units]}
     results: list[dict] = []
+    if getattr(args, "resume", False) and out_path.exists():
+        prev = json.loads(out_path.read_text())
+        same = [{k: v for k, v in u.items() if k != "prefix"} for u in units] == prev.get("units")
+        if same and prev.get("results"):
+            results = prev["results"]
+            print(f"resuming {mode}: {len(results)}/{len(flat)} continuations already on disk")
+        elif prev.get("results"):
+            print(f"NOT resuming {mode}: the unit list changed since {out_path.name} was written")
+    resumed = len(results)
     t0 = time()
-    for start in range(0, len(flat), args.chunk):
+    for start in range(resumed, len(flat), args.chunk):
         batch = flat[start:start + args.chunk]
         print(f"[{datetime.now():%H:%M:%S}] {mode}: submitting {len(batch)} continuations "
               f"({start + len(batch)}/{len(flat)})...", flush=True)
@@ -318,7 +425,8 @@ async def run_mode(mode: str, run_dir: Path, args, sampler, targets, units):
                                 truncated=str(o.outputs[0].finish_reason).startswith("length")))
         write_json(out_path, {**meta, "results": results})
         done, el = start + len(batch), time() - t0
-        eta = timedelta(seconds=int((len(flat) - done) / (done / el))) if done else "?"
+        rate_ = (done - resumed) / el          # this session's rate, not diluted by resumed work
+        eta = timedelta(seconds=int((len(flat) - done) / rate_)) if rate_ > 0 else "?"
         trunc = sum(1 for r in results if r["truncated"])
         print(f"[{datetime.now():%H:%M:%S}] {mode}: {done}/{len(flat)}  "
               f"elapsed {timedelta(seconds=int(el))}  eta {eta}  ({trunc} truncated)", flush=True)
@@ -348,6 +456,8 @@ async def run_mode(mode: str, run_dir: Path, args, sampler, targets, units):
 async def main_async(args):
     run_dir = resolve_run_dir(args.run)
     modes = ["brake", "insertion"] if args.mode == "both" else [args.mode]
+    if args.mode == "targets" and not args.targets:
+        raise SystemExit("--mode targets needs --targets 'cond/idx@k1,k2 ...'")
 
     cfg = json.loads((run_dir / "config.json").read_text())
     model = args.model or cfg.get("model_id") or cfg["model"]
@@ -409,6 +519,32 @@ def summarise(results, mode, targets=None):
                 txt = p_[j].strip().replace("\n", " / ")[:110] if j < len(p_) else ""
             print(f"  passage {j:>3}  {v:+.3f}   {txt}")
         return
+    if mode == "targets":
+        import numpy as np
+        by_roll: dict = {}
+        for r in ok:
+            by_roll.setdefault((r["cond"], r["i"]), {}).setdefault(r["cut"], []).append(r["favoured"])
+        named = {(t["cond"], t["i"]): t["ks"] for t in (targets or [])}
+        sents = {(t["cond"], t["i"]): t["sents"] for t in (targets or [])}
+        floor = 1.96 * (0.5 / max(1, len(ok) // max(1, sum(len(v) for v in by_roll.values())))) ** 0.5
+        for key_, cuts_d in by_roll.items():
+            cuts = sorted(cuts_d)
+            rate = {c: float(np.mean(cuts_d[c])) for c in cuts}
+            print(f"\n=== {key_[0]}/#{key_[1]}")
+            print(f"{'cut':>5} {'n':>5} {'P(fav)':>8} {'95% CI':>16} {'score':>9}   sentence")
+            print("-" * 112)
+            for a, b in zip(cuts, cuts[1:] + [None]):
+                lo, hi = wilson_ci(sum(cuts_d[a]), len(cuts_d[a]))
+                # score of sentence a = P(fav | prefix incl. a) - P(fav | prefix ending a-1),
+                # i.e. the step from cut a to cut a+1. Only defined when both cuts were sampled.
+                sc = f"{rate[b] - rate[a]:+.3f}" if b == a + 1 else ""
+                star = " *" if a in named.get(key_, []) else "  "
+                txt = sents[key_][a].strip().replace("\n", " / ")[:52] if a < len(sents[key_]) else ""
+                print(f"{a:>5}{star} {len(cuts_d[a]):>4} {rate[a]:>8.3f} [{lo:.2f}, {hi:.2f}] "
+                      f"{sc:>9}   {txt}")
+            print("  * = hand-picked target. A named cut's score means something only if it beats "
+                  f"the neighbour steps around it (drift floor ~+/-{floor:.2f}).")
+        return
     key = (lambda r: r["rel"]) if mode == "brake" else (lambda r: r["arm"])
     hdr = "offset from the target sentence" if mode == "brake" else "arm"
     groups: dict = {}
@@ -430,9 +566,16 @@ def summarise(results, mode, targets=None):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", default="qwen3.5-27b_20260823_223518")
-    ap.add_argument("--mode", choices=["brake", "insertion", "both", "sweep"], default="both",
+    ap.add_argument("--mode", choices=["brake", "insertion", "both", "sweep", "targets"],
+                    default="both",
                     help="'both' runs brake+insertion through one engine boot; 'sweep' scores every "
-                         "passage of one named rollout (--target)")
+                         "passage of one named rollout (--target); 'targets' resamples hand-picked "
+                         "cut points with a neighbour window (--targets)")
+    ap.add_argument("--targets", default="",
+                    help="targets mode: 'cond/idx@k1,k2 cond/idx@k3' — cut points to resample")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue from the checkpoint in analysis/resample_<mode>.json; the unit "
+                         "list must be identical, so pass the same --targets/--window/--samples")
     ap.add_argument("--target", default="above_good/12",
                     help="sweep mode: 'cond/index' of the rollout to dissect")
     ap.add_argument("--min-passage-chars", type=int, default=250,
