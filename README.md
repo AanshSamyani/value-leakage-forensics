@@ -280,9 +280,25 @@ so Qwen3.5-27B is read from the cache the vLLM runs already populated. `/workspa
 untouched; setup writes its own `/workspace/env-value-axis.sh`, and you source one or the other, never
 both.
 
+Measured on Qwen3.5-27B: value_axis.npy is (65, 5120), and held-out AUC is **1.000 across layers
+17-50** (their indexing), i.e. a broad plateau rather than one good layer. The converter takes the
+MIDDLE of that plateau rather than its first member, which is more robust to where the boundary
+happens to fall.
+
 **The gate is the held-out AUROC** that `compute_vector.py` reports across its 35 reward functions —
 the paper's own validation, computed on our model. If nothing reaches ~0.70 the axis did not transfer
 and a read-out built on it would be measuring noise.
+
+Before the read-out, build the null direction — this is not optional:
+
+```bash
+python scripts/make_control_vector.py --like vectors/value_axis.pt -o vectors/random_control.pt
+python scripts/08_readout.py --vector vectors/random_control.pt --runs qwen3.5-27b_20260823_223518
+```
+
+The three conditions have different prompts and different reasoning, so ANY direction separates them
+a little. A value-axis difference only means something if it beats what a random direction of the
+same norm produces on the same rollouts.
 
 `analysis/convert_value_axis.py` maps their `.npy` into our vector schema, including the off-by-one
 that would otherwise ruin the read-out: their `hidden_states[j]` is the output of decoder layer j-1,

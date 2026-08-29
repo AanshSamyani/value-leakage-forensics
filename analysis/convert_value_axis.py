@@ -30,26 +30,67 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def per_layer_auroc(path: Path | None, n: int) -> dict[int, float] | None:
-    """Best-effort: pull a per-layer AUROC out of their results file, whatever shape it takes."""
+    """Pull a per-layer AUROC out of their results file, whatever shape it takes.
+
+    compute_vector.py prints AUC, a standard deviation and a "correct direction" fraction per layer,
+    so a naive walk over every float in [0,1] scoops up all three and reports nonsense. This looks
+    for the AUC specifically: numeric-keyed maps of scalars, maps of per-layer dicts carrying an
+    auc/auroc field, and parallel lists.
+    """
     if not path or not path.exists():
         return None
     blob = json.loads(path.read_text())
+    AUC_KEYS = ("auc", "auroc", "auc_mean", "mean_auc", "test_auc", "held_out_auc")
+
+    def as_layer_key(k):
+        t = str(k).lower().replace("layer", "").strip(" _-")
+        return int(t) if t.isdigit() else None
 
     def walk(o):
         if isinstance(o, dict):
-            # {"12": 0.83, ...} or {"layer_12": 0.83, ...}
-            keys = [k for k in o if str(k).strip("layer_ ").isdigit()]
-            if len(keys) >= max(3, n // 4) and all(isinstance(o[k], (int, float)) for k in keys):
-                return {int(str(k).strip("layer_ ")): float(o[k]) for k in keys}
+            # {"0": 0.938, ...} or {"layer_0": {...}, ...}
+            keyed = {as_layer_key(k): v for k, v in o.items() if as_layer_key(k) is not None}
+            if len(keyed) >= max(3, n // 4):
+                if all(isinstance(v, (int, float)) for v in keyed.values()):
+                    return {k: float(v) for k, v in keyed.items()}
+                if all(isinstance(v, dict) for v in keyed.values()):
+                    for ak in AUC_KEYS:
+                        if all(ak in v for v in keyed.values()):
+                            return {k: float(v[ak]) for k, v in keyed.items()}
+            # parallel lists: {"layers": [...], "auc": [...]}
+            for ak in AUC_KEYS:
+                if isinstance(o.get(ak), list) and len(o[ak]) in (n, n - 1):
+                    lay = o.get("layers") or o.get("layer") or list(range(len(o[ak])))
+                    return {int(l): float(v) for l, v in zip(lay, o[ak])}
             for v in o.values():
                 r = walk(v)
                 if r:
                     return r
-        elif isinstance(o, list) and len(o) in (n, n + 1) and all(isinstance(v, (int, float)) for v in o):
-            return {i: float(v) for i, v in enumerate(o)}
+        elif isinstance(o, list):
+            if len(o) in (n, n - 1) and all(isinstance(v, (int, float)) for v in o):
+                return {i: float(v) for i, v in enumerate(o)}
+            if o and all(isinstance(v, dict) for v in o):
+                for ak in AUC_KEYS:
+                    if all(ak in v for v in o):
+                        return {int(v.get("layer", i)): float(v[ak]) for i, v in enumerate(o)}
         return None
 
     return walk(blob)
+
+
+def pick_layers(auroc: dict[int, float], n_layers: int, tol: float = 0.005) -> list[int]:
+    """Middle of the top plateau, not its first member.
+
+    On this model layers 17-50 all score 1.000, so "best layer" is whichever happens to come first.
+    Sitting in the middle of the plateau is more robust to the exact boundary than sitting on its edge.
+    """
+    best = max(auroc.values())
+    plateau = sorted(li for li, v in auroc.items() if v >= best - tol and 0 <= li < n_layers)
+    if not plateau:
+        return sorted(auroc, key=lambda li: -auroc[li])[:3]
+    mid = plateau[len(plateau) // 2]
+    flank = [plateau[len(plateau) // 3], plateau[2 * len(plateau) // 3]]
+    return list(dict.fromkeys([mid] + flank))
 
 
 def main():
@@ -80,14 +121,14 @@ def main():
         for li in range(n_layers):
             stats[li] = {"auroc": shifted.get(li), "pair_acc": shifted.get(li), "d_prime": float("nan"),
                          "train_stats": {"d_prime": float("nan")}}
-        band = [li for li in range(n_layers) if 0.25 * n_layers <= li <= 0.70 * n_layers
-                and shifted.get(li) is not None]
-        ranked = sorted(band or [li for li in shifted], key=lambda li: -shifted[li])
-        rec = ranked[:3]
-        print("held-out AUROC (their validation, on this model): "
-              f"best {shifted[rec[0]]:.3f} at layer {rec[0]}; "
-              f"median across layers {np.median([v for v in shifted.values()]):.3f}")
-        if shifted[rec[0]] < 0.60:
+        rec = pick_layers(shifted, n_layers)
+        best = max(shifted.values())
+        plateau = sorted(li for li, v in shifted.items() if v >= best - 0.005)
+        print(f"held-out AUROC (their validation, on this model): best {best:.3f}; "
+              f"median across layers {np.median(list(shifted.values())):.3f}")
+        print(f"  plateau at >= {best - 0.005:.3f}: layers {plateau[0]}-{plateau[-1]} "
+              f"({len(plateau)} layers) -> taking the middle: {rec}")
+        if best < 0.60:
             print("  !! best AUROC below 0.60 — the axis may not have transferred to this model. "
                   "Treat any read-out built on it with suspicion.")
     else:
