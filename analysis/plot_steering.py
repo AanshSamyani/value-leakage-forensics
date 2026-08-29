@@ -40,6 +40,7 @@ def main() -> None:
     arms = {0.0: load(REF)}
     for p in R.glob("*steer-value_axis*"):
         arms[round(float(p.name.split("-a")[1].split("_")[0]), 4)] = load(p)
+    ctrl = next(R.glob("*steer-random_control*"), None)      # matched-magnitude random direction
     al = sorted(arms)
     pct = [a / 1.0091 * 10 for a in al]          # alpha 1.0091 == 10% of the residual-stream norm
 
@@ -92,6 +93,14 @@ def main() -> None:
     k = [i for i, a in enumerate(al) if a in (-2.0181, 1.0091)]
     ax[2].scatter([disp[i] for i in k], [sep[i] for i in k], s=290, facecolor="none",
                   edgecolor="#4A4A4A", lw=1.4, zorder=2)
+    if ctrl is not None:
+        v = load(ctrl)
+        cd = abs(np.log(np.median(v["baseline"]) / T))
+        cs = np.log(np.median(v["above_good"]) / np.median(v["below_good"]))
+        ax[2].scatter([cd], [cs], marker="s", s=95, facecolor="white", edgecolor="#4A4A4A",
+                      lw=1.6, zorder=4)
+        ax[2].annotate("random", (cd, cs), textcoords="offset points", xytext=(9, 5),
+                       fontsize=9, color="#4A4A4A")
     x = np.array(disp); y = np.array(sep)
     m, b = np.polyfit(x, y, 1)
     xs = np.linspace(0, max(x) * 1.05, 50)
