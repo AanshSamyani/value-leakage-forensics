@@ -40,6 +40,11 @@ class VLLMOfflineSampler:
         # dies with "Cannot re-initialize CUDA in forked subprocess". vLLM's auto-detection of this is
         # timing-dependent (it caught it on Qwen3.6-27B, missed it on Qwen3.5-35B-A3B-FP8), so force spawn.
         os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+        # vLLM 0.28 ships apply_model's callable to the EngineCore process with msgpack, which cannot
+        # encode the functools.partial we use to pass kwargs to the hook installers:
+        #   TypeError: Object of type <class 'functools.partial'> is not serializable
+        # 0.27 used pickle and this did not arise. Must be set before the engine is constructed.
+        os.environ.setdefault("VLLM_ALLOW_INSECURE_SERIALIZATION", "1")
         from vllm import LLM  # heavy import; keep local
 
         self.model = model

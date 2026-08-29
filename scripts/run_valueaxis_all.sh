@@ -24,6 +24,7 @@ VA_PY=${VA_PY:-/workspace/value-axis/.venv/bin/python}
 MAIN_PY=${MAIN_PY:-/workspace/venv/bin/python}
 export HF_HOME=${HF_HOME:-/workspace/hf}
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ALLOW_INSECURE_SERIALIZATION=${VLLM_ALLOW_INSECURE_SERIALIZATION:-1}  # vLLM 0.28: apply_model uses msgpack, which cannot encode functools.partial
 export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
 RUN=${RUN:-qwen3.5-27b_20260823_223518}
 PER_COND=${PER_COND:-20}

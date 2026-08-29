@@ -34,7 +34,8 @@ GPU_MEM=${GPU_MEM:-0.92}
 MAX_NUM_SEQS=${MAX_NUM_SEQS:-128}
 CHAT_TEMPLATE_KWARGS=${CHAT_TEMPLATE_KWARGS:-}
 
-export VLLM_WORKER_MULTIPROC_METHOD=spawn   # avoid fork-with-CUDA crash in vLLM EngineCore
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ALLOW_INSECURE_SERIALIZATION=${VLLM_ALLOW_INSECURE_SERIALIZATION:-1}  # vLLM 0.28: apply_model uses msgpack, which cannot encode functools.partial   # avoid fork-with-CUDA crash in vLLM EngineCore
 # Some pod images ship a minimal CUDA toolkit without curand.h; FlashInfer's sampling JIT then fails
 # at engine warmup. The torch-native sampler needs no compilation and is fast enough for our batches.
 export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}

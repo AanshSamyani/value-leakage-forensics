@@ -45,6 +45,7 @@ def remove_all(model=None):
     STATE["handles"] = []
     STATE["steer"] = None
     STATE["capture"] = None
+    STATE.pop("_steer_logged", None)
     return "ok"
 
 
@@ -71,10 +72,20 @@ def install_steering(model, vec_path: str, layers: list[int], alpha: float):
         v = v.to(device=p.device, dtype=p.dtype)
         STATE["steer"]["vecs"][li] = v
 
-        def hook(module, args, output, v=v):
+        def hook(module, args, output, v=v, li=li):
             a = STATE["steer"]["alpha"] if STATE["steer"] else 0.0
             if a == 0.0:
                 return output
+            # Log the layer-output shape once. Steering assumes a vLLM decoder layer returns
+            # (hidden_states, residual) and that adding to hidden_states adds to the stream; if a vLLM
+            # release changes that, steering would silently do the wrong thing rather than fail.
+            if not STATE.get("_steer_logged"):
+                STATE["_steer_logged"] = True
+                kind = (f"tuple(len={len(output)}, shapes="
+                        f"{[tuple(o.shape) for o in output if hasattr(o, 'shape')]})"
+                        if isinstance(output, tuple) else f"tensor{tuple(output.shape)}")
+                print(f"[steer] layer {li} output is {kind}; adding {a:+.4f} * v "
+                      f"(||v||={float(v.float().norm()):.3f}) to hidden_states", flush=True)
             if isinstance(output, tuple):
                 return (output[0] + a * v, *output[1:])
             return output + a * v

@@ -33,7 +33,8 @@ JUDGE_MODEL=${JUDGE_MODEL:-claude-haiku-4-5}
 JUDGE_CONCURRENCY=${JUDGE_CONCURRENCY:-16}
 JOBS=${JOBS:-jobs_starter}
 
-export VLLM_WORKER_MULTIPROC_METHOD=spawn                       # fork-with-CUDA crash in EngineCore
+export VLLM_WORKER_MULTIPROC_METHOD=spawn
+export VLLM_ALLOW_INSECURE_SERIALIZATION=${VLLM_ALLOW_INSECURE_SERIALIZATION:-1}  # vLLM 0.28: apply_model uses msgpack, which cannot encode functools.partial                       # fork-with-CUDA crash in EngineCore
 export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}   # pod images without curand.h
 
 echo "=== batch [$JOBS]  model=$MODEL count=$COUNT chunk=$CHUNK  ($(date))"
