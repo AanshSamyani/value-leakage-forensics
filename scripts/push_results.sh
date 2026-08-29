@@ -49,9 +49,13 @@ for d in "${dirs[@]}"; do
   fi
 done
 # steering vectors + their validation reports (small; built by scripts/07_build_vector.py)
-if compgen -G "$ROOT/vectors/*.pt" > /dev/null; then
-  if [ "${DRY_RUN:-0}" = "1" ]; then echo "  would add vectors/*.pt vectors/*.md"; else git add -f "$ROOT"/vectors/*.pt "$ROOT"/vectors/*.md 2>/dev/null || true; fi
-fi
+# One `git add -f a.pt b.md` aborts on the first pathspec that matches nothing, adding NEITHER —
+# which is why vectors/ stayed untracked through every push so far. Add each pattern separately.
+for pat in "*.pt" "*.md" "*.json"; do
+  compgen -G "$ROOT/vectors/$pat" > /dev/null || continue
+  if [ "${DRY_RUN:-0}" = "1" ]; then echo "  would add vectors/$pat"; else git add -f "$ROOT"/vectors/$pat; fi
+  added=$((added+1))
+done
 [ "$added" -gt 0 ] || { echo "nothing to add"; exit 0; }
 [ "${DRY_RUN:-0}" = "1" ] && { echo "(dry run — nothing committed)"; exit 0; }
 

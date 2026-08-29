@@ -20,8 +20,15 @@
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 set -a; [ -f .env ] && source .env; set +a
-VA_PY=${VA_PY:-/workspace/value-axis/.venv/bin/python}
 MAIN_PY=${MAIN_PY:-/workspace/venv/bin/python}
+# The value-axis venv exists to keep their repo's pins away from ours, but it lives outside
+# /workspace on some pods and does not survive a rebuild. Steps 1 and 3 only need torch +
+# transformers, both of which the main venv has, so fall back rather than fail the whole run.
+VA_PY=${VA_PY:-/workspace/value-axis/.venv/bin/python}
+if [ ! -x "$VA_PY" ]; then
+  echo "note: $VA_PY missing — using the main venv for the read-out steps"
+  VA_PY=$MAIN_PY
+fi
 export HF_HOME=${HF_HOME:-/workspace/hf}
 export VLLM_WORKER_MULTIPROC_METHOD=spawn
 export VLLM_ALLOW_INSECURE_SERIALIZATION=${VLLM_ALLOW_INSECURE_SERIALIZATION:-1}  # vLLM 0.28: apply_model uses msgpack, which cannot encode functools.partial
