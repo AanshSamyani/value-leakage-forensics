@@ -262,6 +262,33 @@ never / early-only / late mention it. It is an echo of the prompt in the model's
 not a brake — which is why removing it from the prompt changes behaviour while the model saying it
 never meant anything.
 
+## Value axis (arXiv:2606.17056, github nickjiang2378/value-axis)
+
+Does the bet raise the model's internal "am I succeeding" signal? Steps 1-2 of their construction are
+model-independent and already published, so only two steps touch a model and neither needs an API key.
+
+```bash
+bash scripts/setup_value_axis.sh     # isolated venv at /workspace/value-axis/.venv, ~20-40 min
+bash scripts/run_value_axis.sh       # extract + compute + convert, ~15-25 min
+source /workspace/env.sh             # back to the main venv
+python scripts/08_readout.py --vector vectors/value_axis.pt --runs qwen3.5-27b_20260823_223518
+```
+
+Kept in a **separate venv** on purpose: the value-axis repo pins its own dependency set and installing
+it into `/workspace/venv` could break vLLM. The two environments share only `HF_HOME=/workspace/hf`,
+so Qwen3.5-27B is read from the cache the vLLM runs already populated. `/workspace/env.sh` is left
+untouched; setup writes its own `/workspace/env-value-axis.sh`, and you source one or the other, never
+both.
+
+**The gate is the held-out AUROC** that `compute_vector.py` reports across its 35 reward functions —
+the paper's own validation, computed on our model. If nothing reaches ~0.70 the axis did not transfer
+and a read-out built on it would be measuring noise.
+
+`analysis/convert_value_axis.py` maps their `.npy` into our vector schema, including the off-by-one
+that would otherwise ruin the read-out: their `hidden_states[j]` is the output of decoder layer j-1,
+while our hooks index decoder layers directly. It also takes `recommended_layers` from their per-layer
+AUROC rather than our depth-band heuristic, since that is measured on this model rather than assumed.
+
 ## vLLM on RunPod (reference commands)
 
 ```bash
