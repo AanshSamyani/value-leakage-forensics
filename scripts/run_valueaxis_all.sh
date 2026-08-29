@@ -11,7 +11,12 @@
 #
 # Steps are independent: if vLLM cannot be repaired, step 1 still lands and only steering is skipped.
 #
-# Env: PER_COND (20), STEER_LAYER (32), PCTS ("10,20"), COUNT (100), RUN, SKIP_PERTOKEN, SKIP_STEER.
+# Env: PER_COND (20), STEER_LAYER (32), PCTS ("10,20"), COUNT (100), RUN,
+#      SKIP_PERTOKEN, SKIP_CAL, SKIP_STEER, FORCE_CAL.
+#
+# Steps 1 and 3 write to disk under /workspace, which survives a pod restart, so a re-run after
+# moving hosts should skip both: SKIP_PERTOKEN=1 (step 1) and, automatically, step 3 whenever
+# /workspace/logs/steer_alpha.json already holds a calibration for the requested layer.
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 set -a; [ -f .env ] && source .env; set +a
@@ -31,8 +36,11 @@ step () { echo; echo "##########################################################
           echo "### [$(date +%H:%M:%S)] $*"; echo "############################################################"; }
 
 # ---------------------------------------------------------------- 1. per-token
-if [ "${SKIP_PERTOKEN:-0}" != "1" ]; then
-  step "1/4  per-token projections + backtracking events  (~10 min)"
+NPZ=$(ls "$ROOT"/data/runs/"$RUN"/analysis/pertoken/*.npz 2>/dev/null | wc -l | tr -d ' ')
+if [ "${SKIP_PERTOKEN:-0}" = "1" ]; then
+  step "1/4  per-token SKIPPED ($NPZ .npz already on disk)"
+else
+  step "1/4  per-token projections + backtracking events  (~10 min; $NPZ already present)"
   "$VA_PY" scripts/08c_pertoken_hf.py --vectors vectors/value_axis.pt vectors/random_control.pt \
       --run "$RUN" --per-cond "$PER_COND" || echo "!!! per-token step FAILED — continuing"
 fi
@@ -43,9 +51,17 @@ PY="$MAIN_PY" bash scripts/fix_vllm.sh
 VLLM_OK=$?
 
 # ---------------------------------------------------------------- 3. calibrate
-step "3/4  calibrate alpha at layer $STEER_LAYER against the residual-stream norm"
-"$VA_PY" scripts/calibrate_steer_alpha.py --vector vectors/value_axis.pt --run "$RUN" \
-    --layer "$STEER_LAYER" --pcts "5,10,20,40" -o "$CAL" || echo "!!! calibration FAILED"
+CACHED_LAYER=""
+[ -f "$CAL" ] && CACHED_LAYER=$("$MAIN_PY" -c "import json;print(json.load(open('$CAL'))['layer'])" 2>/dev/null || true)
+if [ "${FORCE_CAL:-0}" != "1" ] && { [ "${SKIP_CAL:-0}" = "1" ] || [ "$CACHED_LAYER" = "$STEER_LAYER" ]; }; then
+  step "3/4  calibration reused from $CAL (layer $CACHED_LAYER) — nothing to recompute"
+  "$MAIN_PY" -c "import json;d=json.load(open('$CAL'));print('   mean||h||',round(d['h_norm'],1),
+'||v||',round(d['v_norm'],3));[print(f"   {k:>5}% -> alpha {v:.3f}") for k,v in d['alpha_by_pct'].items()]" || true
+else
+  step "3/4  calibrate alpha at layer $STEER_LAYER against the residual-stream norm"
+  "$VA_PY" scripts/calibrate_steer_alpha.py --vector vectors/value_axis.pt --run "$RUN" \
+      --layer "$STEER_LAYER" --pcts "5,10,20,40" -o "$CAL" || echo "!!! calibration FAILED"
+fi
 
 # ---------------------------------------------------------------- 4. steering
 if [ "${SKIP_STEER:-0}" = "1" ] || [ "$VLLM_OK" -ne 0 ] || [ ! -f "$CAL" ]; then
