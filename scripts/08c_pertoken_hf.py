@@ -61,8 +61,20 @@ def main():
 
     from transformers import AutoModelForCausalLM, AutoTokenizer
     tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16, device_map="auto",
-                                                 trust_remote_code=True).eval()
+    # device_map="auto" needs accelerate, which is not installable in the main venv (its
+    # huggingface-hub 1.x outruns every real accelerate release, so pip resolves back to the 0.0.1
+    # stub). A 27B model in bf16 is ~54GB and fits on one 80GB card, so shard only when we can, and
+    # otherwise load to CPU and move it. The move needs ~54GB of system RAM transiently.
+    try:
+        import accelerate  # noqa: F401
+        kw = {"device_map": "auto"}
+    except ImportError:
+        kw = {}
+        print("accelerate absent — loading on a single device", flush=True)
+    model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16,
+                                                 trust_remote_code=True, **kw).eval()
+    if not kw:
+        model = model.to("cuda" if torch.cuda.is_available() else "cpu")
     dev = next(model.parameters()).device
     M = {}
     for li in layers:
