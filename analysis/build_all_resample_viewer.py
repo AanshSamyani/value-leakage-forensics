@@ -95,6 +95,8 @@ th{color:var(--muted);font-weight:500}
   font-size:12.5px;margin:0 0 22px}
 .sw{display:inline-block;width:22px;height:11px;border-radius:2px;vertical-align:-1px;
   margin-right:5px}
+.formula{background:var(--soft);border-radius:6px;padding:9px 13px;margin:0 0 16px;
+  font:13.5px/1.7 ui-monospace,Menlo,monospace;display:inline-block}
 details{margin-top:11px}summary{cursor:pointer;color:var(--muted);font-size:12.5px}
 .note{color:var(--muted);font-size:12.5px;margin:11px 0 0;border-left:2px solid var(--rule);
   padding-left:11px}
@@ -161,6 +163,10 @@ def render(mode: str, parts: list) -> None:
                      f"{r['final']:,.0f} &middot; threshold {r['T']:,.0f} &middot; landed "
                      f"{'favoured' if r['favoured'] else 'UNFAVOURED'} &middot; scores range "
                      f"{min(score.values()):+.3f} to {max(score.values()):+.3f}</span></div>")
+        side = ("above" if key[0] == "above_good" else "below")
+        parts.append(f"<p class='note'>Here <b>red</b> = pushed the estimate toward landing "
+                     f"<b>{side} {r['T']:,.0f}</b>, which is the side that wins this rollout's bet; "
+                     "green = pushed it the other way.</p>")
         parts.append("<div class='cot'>")
         if lo - ctx > 0:
             parts.append(f"<span class='gap'>[ units 0&ndash;{lo - ctx - 1} not resampled ]</span>")
@@ -222,17 +228,29 @@ def insertion_table(parts: list) -> None:
 def main() -> None:
     parts = [f"<title>Sentence Resampling</title><style>{CSS}</style>",
              "<div class='wrap'><h1>Sentence resampling: every run</h1>",
-             "<p class='sub'>Each shaded unit was resampled: the trace was cut immediately before "
-             "it, regenerated many times, and scored by how much including it shifts P(favoured). "
-             "<b>Red</b> pushes toward the biased answer, <b>green</b> toward the honest one. Every "
-             "resampled unit is tinted regardless of effect size &mdash; shading is relative within "
-             "each rollout, so a strong tint in one card is not comparable to a strong tint in "
-             "another. Exact scores are in the tooltips and tables.</p>",
+             "<p class='sub'>Each shaded unit was resampled: the trace was cut immediately "
+             "before it, regenerated many times, and scored by how much <i>including</i> it shifts "
+             "the outcome.</p>"
+             "<p class='formula'>score(sentence <i>j</i>) &nbsp;=&nbsp; "
+             "P(favoured | prefix <b>including</b> <i>j</i>) &nbsp;&minus;&nbsp; "
+             "P(favoured | prefix <b>ending at</b> <i>j</i>&minus;1)</p>"
+             "<p class='sub'><b>Favoured</b> means the side of the threshold that wins the bet for "
+             "the good cause &mdash; <i>above</i> it in an above-good rollout, <i>below</i> it in a "
+             "below-good one. So a <b style='color:var(--red)'>red</b> sentence made the model more "
+             "likely to land on the side the donation rewards: it contributed to the bias. A "
+             "<b style='color:var(--green)'>green</b> sentence made that less likely, pushing the "
+             "model off the incentivised answer.</p>"
+             "<p class='sub'>Every resampled unit is tinted regardless of effect size, and shading "
+             "is relative <i>within</i> each rollout &mdash; a strong tint in one card is not "
+             "comparable to a strong tint in another. Exact scores are in the tooltips and tables."
+             "</p>",
              "<p class='legend'>"
-             "<span><span class='sw' style='background:rgba(178,58,34,.50)'></span>pushes biased</span>"
-             "<span><span class='sw' style='background:rgba(47,107,69,.50)'></span>pushes honest</span>"
+             "<span><span class='sw' style='background:rgba(178,58,34,.50)'></span>"
+             "score &gt; 0 &middot; toward the incentivised side (more biased)</span>"
+             "<span><span class='sw' style='background:rgba(47,107,69,.50)'></span>"
+             "score &lt; 0 &middot; away from it (less biased)</span>"
              "<span><span class='sw' style='background:rgba(120,120,120,.16)'></span>"
-             "resampled, near-zero</span>"
+             "resampled, near zero</span>"
              "<span><span class='star'>underlined</span> = hand-picked target</span></p>"]
     for mode in ("targets", "brake", "sweep"):
         render(mode, parts)
