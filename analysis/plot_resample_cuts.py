@@ -13,7 +13,8 @@ which means the flat windows genuinely render flat rather than being stretched t
 
 A +/-2 window samples five cut points, which yields four scores: a sentence's score is the
 difference between the cut before it and the cut after it, so the last cut has nothing to pair with.
-The fifth sentence, and one before the window, are drawn as grey context.
+Only those scored sentences are drawn — no surrounding context, and no colour key; the scale is
+shared across the folder and printed when the figures are built.
 
 The sweep is excluded — 69 cut points across one rollout is not a window, and it already has its
 own viewer.
@@ -88,43 +89,29 @@ def wrap(runs: list[tuple[str, int | None]]) -> list[list[tuple[str, int | None]
 
 def draw(rec: dict, scale: float) -> Path:
     k, sents, score = rec["k"], rec["sents"], rec["score"]
-    lo, hi = max(0, k - 3), min(len(sents) - 1, k + 2)
-    runs = [(sents[j].replace("\n", " "), j if j in score else None) for j in range(lo, hi + 1)]
+    # only the sentences this window actually scored — no surrounding context
+    js = sorted(j for j in score if k - 2 <= j <= k + 2)
+    runs = [(sents[j].replace("\n", " "), j) for j in js]
     lines = wrap(runs)
 
-    height = LH * (len(lines) + 1.1)
-    fig = plt.figure(figsize=(WIDTH, height + 0.62), facecolor="white")
-    top = 1 - (0.30 / (height + 0.62))
+    pad = 0.10
+    H = LH * len(lines) + 2 * pad
+    fig = plt.figure(figsize=(WIDTH, H), facecolor="white")
+    top = 1 - pad / H
     for li, line in enumerate(lines):
-        y = top - (li + 0.5) * (LH / (height + 0.62))
+        y = top - (li + 0.5) * (LH / H)
         col = 0
         for text, sid in line:
             x = MARGIN + col * CW
             w = len(text) * CW
-            if sid is not None:
-                s = score[sid]
-                a = min(0.80, 0.06 + 0.74 * abs(s) / scale)
-                fig.add_artist(Rectangle((x, y - LH / (height + 0.62) * 0.42), w,
-                                         LH / (height + 0.62) * 0.84,
-                                         facecolor=(RED if s > 0 else GREEN), alpha=a,
-                                         edgecolor="none", zorder=1))
+            sc = score[sid]
+            a = min(0.80, 0.06 + 0.74 * abs(sc) / scale)
+            fig.add_artist(Rectangle((x, y - LH / H * 0.42), w, LH / H * 0.84,
+                                     facecolor=(RED if sc > 0 else GREEN), alpha=a,
+                                     edgecolor="none", zorder=1))
             fig.text(x, y, text, family="monospace", fontsize=FS, va="center", ha="left",
-                     color="#1A1A1A" if sid is not None else "#9A9A9A", zorder=2)
+                     color="#1A1A1A", zorder=2)
             col += len(text)
-
-    # colour key: one bar, the shared scale for every image in the folder
-    ax = fig.add_axes([MARGIN, 0.055 / (height + 0.62), 0.30, 0.30 / (height + 0.62)])
-    g = np.linspace(-1, 1, 256)
-    img = np.zeros((1, 256, 4))
-    for n, v in enumerate(g):
-        img[0, n, :3] = GREEN if v < 0 else RED
-        img[0, n, 3] = min(0.80, 0.06 + 0.74 * abs(v))
-    ax.imshow(img, aspect="auto", extent=[-scale, scale, 0, 1])
-    ax.set_yticks([]); ax.set_xticks([-scale, 0, scale])
-    ax.set_xticklabels([f"{-scale:+.2f}", "0", f"{scale:+.2f}"], fontsize=7.5, color="#666")
-    ax.tick_params(length=2, pad=1.5)
-    for sp in ax.spines.values():
-        sp.set_color("#CCC"); sp.set_linewidth(.6)
 
     OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"{rec['mode']}_{rec['cond']}_{rec['i']:03d}_cut{k:03d}.png"
