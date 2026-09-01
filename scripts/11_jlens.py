@@ -124,7 +124,7 @@ def anchor_offset(tok, model, lenses, a):
         hi = tl - off
         if hi not in S:
             continue
-        i, p = readout(S[hi, -1:], J[tl], model, 50)
+        i, p = readout(S[hi][-1:], J[tl], model, 50)
         agree = float(true.topk(50).indices.cpu().unsqueeze(0).eq(i).any(-1).float().mean())
         top1 = tok.decode([int(i[0, 0])])
         scores[off] = agree
@@ -154,7 +154,7 @@ def do_validate(a, tok, model, lenses):
                     hi = layer - off
                     if hi not in S:
                         continue
-                    i, p = readout(S[hi, -1:], J[layer], model, a.topk)
+                    i, p = readout(S[hi][-1:], J[layer], model, a.topk)
                     r = (i[0] == tid).nonzero()
                     if len(r):
                         best.append((layer, int(r[0, 0]) + 1, float(p[0, r[0, 0]])))
