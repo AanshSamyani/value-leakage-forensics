@@ -67,26 +67,31 @@ def load_model(model_id: str):
     return tok, m
 
 
-def streams(model, tok, text: str, max_len: int):
-    """-> [n_blocks+1, seq, d] residual stream: index 0 is the embedding output, i+1 is after block i."""
+def streams(model, tok, text: str, max_len: int, want: set[int] | None = None):
+    """-> {hidden_index: [seq, d]}, where index 0 is the embedding output and i+1 is after block i.
+
+    `want` restricts what is kept: a 16k-token trace across all 65 indices is ~10.6 GB of residual
+    stream we would immediately throw away."""
+    blocks = model.model.layers
+    keep = set(range(len(blocks) + 1)) if want is None else {i for i in want if 0 <= i <= len(blocks)}
     grab: dict[int, torch.Tensor] = {}
 
     def mk(i):
         def hook(mod, args, out):
-            grab[i] = (out[0] if isinstance(out, tuple) else out)[0].detach()
+            grab[i + 1] = (out[0] if isinstance(out, tuple) else out)[0].detach()
         return hook
 
-    blocks = model.model.layers
-    hs = [model.model.layers[0].register_forward_pre_hook(
-        lambda m, a: grab.__setitem__(-1, a[0][0].detach()))]
-    hs += [blocks[i].register_forward_hook(mk(i)) for i in range(len(blocks))]
+    hs = []
+    if 0 in keep:
+        hs.append(blocks[0].register_forward_pre_hook(
+            lambda m, a: grab.__setitem__(0, a[0][0].detach())))
+    hs += [blocks[i].register_forward_hook(mk(i)) for i in range(len(blocks)) if i + 1 in keep]
     ids = tok(text, return_tensors="pt", truncation=True, max_length=max_len)
     with torch.no_grad():
         model(ids["input_ids"].to(next(model.parameters()).device))
     for h in hs:
         h.remove()
-    seq = [grab[-1]] + [grab[i] for i in range(len(blocks))]
-    return torch.stack(seq), ids["input_ids"][0]
+    return grab, ids["input_ids"][0]
 
 
 def readout(H: torch.Tensor, Jl: torch.Tensor, model, topk: int, chunk: int = 256):
@@ -95,9 +100,9 @@ def readout(H: torch.Tensor, Jl: torch.Tensor, model, topk: int, chunk: int = 25
     norm = model.model.norm
     dev, dt = W_U.device, W_U.dtype
     ids, ps = [], []
-    Jl = Jl.to(dev, dt)
+    Jl = Jl.to(dev, torch.float32)      # fp32: |J-I| reaches ~13.7 early and bf16 has ~3 digits
     for s in range(0, H.shape[0], chunk):
-        z = norm((H[s:s + chunk].to(dev, dt) @ Jl.T))       # [c, d]
+        z = norm((H[s:s + chunk].to(dev, torch.float32) @ Jl.T).to(dt))    # [c, d]
         p = torch.softmax((z @ W_U.T).float(), dim=-1)      # [c, vocab]
         v, i = p.topk(topk, dim=-1)
         ids.append(i.cpu()); ps.append(v.cpu())
@@ -110,14 +115,14 @@ def anchor_offset(tok, model, lenses, a):
     name, (J, sl, pr) = next(iter(lenses.items()))
     tl = int(pr.get("target_layer", max(sl)))
     text = "The capital of France is"
-    S, ids = streams(model, tok, text, a.max_tokens)
+    S, ids = streams(model, tok, text, a.max_tokens, {tl, tl - 1})
     with torch.no_grad():
         true = model(ids[None].to(next(model.parameters()).device)).logits[0, -1].float().softmax(-1)
     print(f"\n=== offset check at the identity anchor (layer {tl}, max|J-I|=0) ===")
     best, scores = None, {}
     for off in (0, 1):
         hi = tl - off
-        if not (0 <= hi < S.shape[0]):
+        if hi not in S:
             continue
         i, p = readout(S[hi, -1:], J[tl], model, 50)
         agree = float(true.topk(50).indices.cpu().unsqueeze(0).eq(i).any(-1).float().mean())
@@ -138,14 +143,16 @@ def do_validate(a, tok, model, lenses):
         if len(tid) != 1:
             print(f"\n{want!r} is not a single token here ({len(tid)}) — skipping"); continue
         tid = tid[0]
-        S, _ = streams(model, tok, text, a.max_tokens)
+        offs = (a.offset,) if a.offset is not None else (1, 0)
+        need = {l - o for (_, (_, sl, _)) in lenses.items() for l in sl for o in offs}
+        S, _ = streams(model, tok, text, a.max_tokens, need)
         print(f"\n{text!r}   expect {want!r}   (published: {note})")
         for name, (J, sl, _pr) in lenses.items():
-            for off in (a.offset,) if a.offset is not None else (1, 0):
+            for off in offs:
                 best = []
                 for layer in sl:
                     hi = layer - off
-                    if not (0 <= hi < S.shape[0]):
+                    if hi not in S:
                         continue
                     i, p = readout(S[hi, -1:], J[layer], model, a.topk)
                     r = (i[0] == tid).nonzero()
@@ -168,8 +175,8 @@ def do_capture(a, tok, model, lenses):
         prompt = json.loads((RUNS / a.run / f"{cond}.json").read_text())["prompt"]
         text = prompt + (row.get("reasoning") or "")
         n_pre = len(tok(prompt, add_special_tokens=False)["input_ids"])
-        S, ids = streams(model, tok, text, a.max_tokens)
         keep = [l for l in range(a.lo, a.hi + 1, a.stride)]
+        S, ids = streams(model, tok, text, a.max_tokens, {l - a.offset for l in keep})
         rec = {"tokens": ids.numpy().astype(np.int32), "n_pre": n_pre,
                "layers": np.array(keep), "cond": cond, "i": idx}
         for name, (J, sl, _pr) in lenses.items():
@@ -210,7 +217,8 @@ def main() -> None:
     for arm in a.lenses:
         J, sl, pr = load_lens(Path(a.lens_dir) / f"{arm}-lens" / "lens.pt")
         lenses[f"{arm}-lens"] = (J, sl, pr)
-        print(f"{arm}-lens: J {tuple(J.shape)} {J.dtype}, layers {min(sl)}..{max(sl)}, "
+        v = J[min(J)]
+        print(f"{arm}-lens: {len(J)} layers {min(sl)}..{max(sl)}, each {tuple(v.shape)} {v.dtype}, "
               f"target={pr.get('target_layer')}")
     tok, model = load_model(model_id)
     print(f"model {model_id}: {len(model.model.layers)} blocks", flush=True)
