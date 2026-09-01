@@ -100,13 +100,24 @@ def readout(H: torch.Tensor, Jl: torch.Tensor, model, topk: int, chunk: int = 25
     norm = model.model.norm
     dev, dt = W_U.device, W_U.dtype
     ids, ps = [], []
-    Jl = Jl.to(dev, torch.float32)      # fp32: |J-I| reaches ~13.7 early and bf16 has ~3 digits
+    Jl = Jl.to(dev, torch.float32)
+    torch.set_grad_enabled(False)      # fp32: |J-I| reaches ~13.7 early and bf16 has ~3 digits
     for s in range(0, H.shape[0], chunk):
         z = norm((H[s:s + chunk].to(dev, torch.float32) @ Jl.T).to(dt))    # [c, d]
         p = torch.softmax((z @ W_U.T).float(), dim=-1)      # [c, vocab]
         v, i = p.topk(topk, dim=-1)
         ids.append(i.cpu()); ps.append(v.cpu())
     return torch.cat(ids), torch.cat(ps)
+
+
+def token_rank(H, Jl, model, tid: int) -> tuple[int, float]:
+    """Full-vocabulary rank (1 = best) and probability of one token, at one layer/position."""
+    with torch.no_grad():
+        W_U, norm = model.lm_head.weight, model.model.norm
+        dev, dt = W_U.device, W_U.dtype
+        z = norm((H.to(dev, torch.float32) @ Jl.to(dev, torch.float32).T).to(dt))
+        lg = (z @ W_U.T).float()[0]
+        return int((lg > lg[tid]).sum()) + 1, float(lg.softmax(-1)[tid])
 
 
 def anchor_offset(tok, model, lenses, a):
@@ -137,32 +148,35 @@ def anchor_offset(tok, model, lenses, a):
 
 
 def do_validate(a, tok, model, lenses):
-    print("\n=== validation: does the readout reproduce the published probes? ===")
+    """Rank of the expected token at every layer, both lenses, both offsets.
+
+    The published claim is about RANK (R reaches rank 1 by layer ~5 where J is >1000), so top-k
+    membership cannot test it — anything at rank 11..1000 looks identical to rank 50,000. This also
+    breaks the offset tie the anchor check could not: layers 61 and 62 both predict " Paris", so
+    that test is uninformative, but a whole rank-vs-layer curve is not."""
+    offs = (a.offset,) if a.offset is not None else (0, 1)
     for text, want, note in PROBES:
         tid = tok(want, add_special_tokens=False)["input_ids"]
         if len(tid) != 1:
-            print(f"\n{want!r} is not a single token here ({len(tid)}) — skipping"); continue
+            print(f"\n{want!r} is not a single token here ({len(tid)}) — skipping")
+            continue
         tid = tid[0]
-        offs = (a.offset,) if a.offset is not None else (1, 0)
         need = {l - o for (_, (_, sl, _)) in lenses.items() for l in sl for o in offs}
         S, _ = streams(model, tok, text, a.max_tokens, need)
-        print(f"\n{text!r}   expect {want!r}   (published: {note})")
+        print(f"\n{text!r}   expect {want!r}\n   published: {note}")
+        cols = [l for l in range(0, 63, a.probe_stride)]
+        print("      layer " + " ".join(f"{l:>6}" for l in cols))
         for name, (J, sl, _pr) in lenses.items():
             for off in offs:
-                best = []
-                for layer in sl:
-                    hi = layer - off
-                    if hi not in S:
-                        continue
-                    i, p = readout(S[hi][-1:], J[layer], model, a.topk)
-                    r = (i[0] == tid).nonzero()
-                    if len(r):
-                        best.append((layer, int(r[0, 0]) + 1, float(p[0, r[0, 0]])))
-                first = best[0] if best else None
-                print(f"  {name:<7} offset={off}: " + (
-                    f"first surfaces at layer {first[0]} (rank {first[1]}, p={first[2]:.3f}); "
-                    f"in top-{a.topk} at {len(best)} layers"
-                    if first else f"never in the top-{a.topk}"))
+                cells = []
+                for l in cols:
+                    hi = l - off
+                    if hi not in S or l not in J:
+                        cells.append("     -"); continue
+                    r, _ = token_rank(S[hi][-1:], J[l], model, tid)
+                    cells.append(f"{r:>6}" if r < 100000 else "  >99k")
+                print(f"  {name:<7} off={off} " + " ".join(cells))
+        print("      (cell = rank of the expected token; 1 is best)")
 
 
 def do_capture(a, tok, model, lenses):
@@ -206,6 +220,7 @@ def main() -> None:
     ap.add_argument("--hi", type=int, default=58)
     ap.add_argument("--stride", type=int, default=4)
     ap.add_argument("--topk", type=int, default=10)
+    ap.add_argument("--probe-stride", type=int, default=4, help="layer spacing in --validate")
     ap.add_argument("--max-tokens", type=int, default=16000)
     ap.add_argument("--model", default=None)
     ap.add_argument("--lenses", nargs="+", default=["j", "r"])
