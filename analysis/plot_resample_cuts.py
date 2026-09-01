@@ -105,7 +105,7 @@ def draw(rec: dict, scale: float) -> Path:
             x = MARGIN + col * CW
             w = len(text) * CW
             sc = score[sid]
-            a = min(0.80, 0.06 + 0.74 * abs(sc) / scale)
+            a = min(0.80, 0.06 + 0.74 * min(1.0, abs(sc) / scale))
             fig.add_artist(Rectangle((x, y - LH / H * 0.42), w, LH / H * 0.84,
                                      facecolor=(RED if sc > 0 else GREEN), alpha=a,
                                      edgecolor="none", zorder=1))
@@ -121,10 +121,16 @@ def draw(rec: dict, scale: float) -> Path:
 
 
 def main() -> None:
-    recs = load("targets") + load("brake")
-    scale = max(abs(v) for r in recs for j, v in r["score"].items()
-                if r["k"] - 3 <= j <= r["k"] + 2)
-    print(f"{len(recs)} windows; shared colour scale +/-{scale:.3f}\n")
+    recs = load("targets") + load("targets_74_19") + load("brake")
+    allv = np.array([abs(v) for r in recs for j, v in r["score"].items()
+                     if r["k"] - 3 <= j <= r["k"] + 2])
+    # 98th percentile, not the max: one sentence scores -0.526 against a next-highest of 0.210, and
+    # scaling to it would render the other sixteen windows nearly white. Anything above the scale
+    # clips to full saturation, so that sentence is still unmistakably the darkest in the set.
+    scale = float(np.percentile(allv, 98))
+    n_clip = int((allv > scale).sum())
+    print(f"{len(recs)} windows; shared colour scale +/-{scale:.3f} "
+          f"({n_clip} score(s) clip to full saturation)\n")
     print(f"{'file':<44} {'target score':>13} {'window range':>22}")
     print("-" * 82)
     for r in sorted(recs, key=lambda x: (x["mode"], x["cond"], x["i"], x["k"])):

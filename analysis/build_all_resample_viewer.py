@@ -42,6 +42,13 @@ MODES = {
               "Cut points span &plusmn;2 sentences around that refusal. Does the refusal cause the "
               "honest landing, or report a decision already made?"),
     "targets": dict(
+        title="Invented support",
+        blurb="Five above-good rollouts in which the model attaches a specific spots-per-giraffe "
+              "figure to a named source. The attribution is invented in every case &mdash; giraffe "
+              "<i>population</i> figures from IUCN/GCF are real and citable, but there is no "
+              "literature at all on spots per giraffe, so any named source for a spot count is "
+              "fabricated by construction. Does inventing the backing change the answer?"),
+    "targets_74_19": dict(
         title="Hand-picked targets",
         blurb="Cut points chosen by reading the traces rather than by regex, so two candidate "
               "drivers could be compared <b>inside a single rollout</b> with everything else held "
@@ -252,7 +259,7 @@ def main() -> None:
              "<span><span class='sw' style='background:rgba(120,120,120,.16)'></span>"
              "resampled, near zero</span>"
              "<span><span class='star'>underlined</span> = hand-picked target</span></p>"]
-    for mode in ("targets", "brake", "sweep"):
+    for mode in ("targets", "targets_74_19", "brake", "sweep"):
         render(mode, parts)
     insertion_table(parts)
     parts.append("</div>")
