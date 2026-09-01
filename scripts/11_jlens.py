@@ -47,6 +47,7 @@ PROBES = [
 
 
 def load_lens(path: Path):
+    """J is a {layer: [d, d] fp16} map, layers 0..target_layer, with J[target_layer] == I."""
     d = torch.load(path, map_location="cpu", weights_only=False)
     return d["J"], [int(x) for x in d["source_layers"]], d.get("provenance", {})
 
@@ -103,6 +104,33 @@ def readout(H: torch.Tensor, Jl: torch.Tensor, model, topk: int, chunk: int = 25
     return torch.cat(ids), torch.cat(ps)
 
 
+def anchor_offset(tok, model, lenses, a):
+    """J[target_layer] is exactly I, so the readout there is the stream itself read through
+    norm+W_U. The offset that best matches the model's true next-token distribution is correct."""
+    name, (J, sl, pr) = next(iter(lenses.items()))
+    tl = int(pr.get("target_layer", max(sl)))
+    text = "The capital of France is"
+    S, ids = streams(model, tok, text, a.max_tokens)
+    with torch.no_grad():
+        true = model(ids[None].to(next(model.parameters()).device)).logits[0, -1].float().softmax(-1)
+    print(f"\n=== offset check at the identity anchor (layer {tl}, max|J-I|=0) ===")
+    best, scores = None, {}
+    for off in (0, 1):
+        hi = tl - off
+        if not (0 <= hi < S.shape[0]):
+            continue
+        i, p = readout(S[hi, -1:], J[tl], model, 50)
+        agree = float(true.topk(50).indices.cpu().unsqueeze(0).eq(i).any(-1).float().mean())
+        top1 = tok.decode([int(i[0, 0])])
+        scores[off] = agree
+        print(f"  offset={off}: hidden index {hi}, top-1 {top1!r}, "
+              f"top-50 overlap with the true next-token distribution = {agree:.2f}")
+    if scores:
+        best = max(scores, key=scores.get)
+        print(f"  -> offset={best} aligns source_layers with our hooks")
+    return best
+
+
 def do_validate(a, tok, model, lenses):
     print("\n=== validation: does the readout reproduce the published probes? ===")
     for text, want, note in PROBES:
@@ -115,11 +143,11 @@ def do_validate(a, tok, model, lenses):
         for name, (J, sl, _pr) in lenses.items():
             for off in (a.offset,) if a.offset is not None else (1, 0):
                 best = []
-                for n, layer in enumerate(sl):
+                for layer in sl:
                     hi = layer - off
                     if not (0 <= hi < S.shape[0]):
                         continue
-                    i, p = readout(S[hi, -1:], J[n], model, a.topk)
+                    i, p = readout(S[hi, -1:], J[layer], model, a.topk)
                     r = (i[0] == tid).nonzero()
                     if len(r):
                         best.append((layer, int(r[0, 0]) + 1, float(p[0, r[0, 0]])))
@@ -147,9 +175,8 @@ def do_capture(a, tok, model, lenses):
         for name, (J, sl, _pr) in lenses.items():
             top_i, top_p = [], []
             for layer in keep:
-                n = sl.index(layer)
                 hi = layer - a.offset
-                i, p = readout(S[hi], J[n], model, a.topk)
+                i, p = readout(S[hi], J[layer], model, a.topk)
                 top_i.append(i.numpy().astype(np.int32)); top_p.append(p.numpy().astype(np.float16))
             rec[f"{name}_ids"] = np.stack(top_i)
             rec[f"{name}_probs"] = np.stack(top_p)
@@ -192,6 +219,9 @@ def main() -> None:
         print("note: --offset unset, assuming 1 (source_layers index hidden_states). "
               "Run --validate to confirm.")
     if a.validate:
+        picked = anchor_offset(tok, model, lenses, a)
+        if a.offset is None and picked is not None:
+            a.offset = picked
         do_validate(a, tok, model, lenses)
     if a.rollouts:
         do_capture(a, tok, model, lenses)
