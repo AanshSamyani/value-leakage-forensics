@@ -110,6 +110,14 @@ def roleplaying_examples() -> list[tuple[str, str, str, int]]:
     return out
 
 
+def roleplaying_onpolicy() -> list[tuple[str, str, int]]:
+    """-> (full_prefix, model's own answer, label). Written by 15_roleplaying_onpolicy.py."""
+    f = DATA / "roleplaying_onpolicy.json"
+    if not f.exists():
+        raise SystemExit(f"{f} missing — run scripts/15_roleplaying_onpolicy.py first")
+    return [(d["prefix"], d["answer"], d["label"]) for d in json.loads(f.read_text())]
+
+
 def build_model(model_id: str):
     from transformers import AutoModelForCausalLM, AutoTokenizer
     tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
@@ -173,6 +181,10 @@ def main() -> None:
                          "assertion (matches Apollo's non-thinking llama). native: leave whatever "
                          "the chat template produces.")
     ap.add_argument("--val-fraction", type=float, default=0.2)
+    ap.add_argument("--eval", default="offpolicy", choices=["offpolicy", "onpolicy"],
+                    help="offpolicy: the written honest/deceptive completions that ship with the "
+                         "dataset. onpolicy: the model's own graded answers, which is what Apollo "
+                         "evaluate on and the only version that removes the instruction shortcut.")
     ap.add_argument("--model", default=None)
     ap.add_argument("-o", "--out", default=str(OUT / "deception_probe.pt"))
     a = ap.parse_args()
@@ -232,16 +244,22 @@ def main() -> None:
     is_val = np.array([s_ in val_st for s_ in sid])
     print(f"   held-out RepE: {len(val_st)} statements, {int(is_val.sum()):,} tokens")
 
-    ev = roleplaying_examples()
-    print(f"\nvalidating on {len(ev)} roleplaying completions (off-policy)")
+    if a.eval == "onpolicy":
+        pairs = roleplaying_onpolicy()
+    else:
+        pairs = [(chat(q, system=sysm + "\n\n" + RP_POSTFIX), comp, lab)
+                 for sysm, q, comp, lab in roleplaying_examples()]
+    n_dec = sum(l for _, _, l in pairs)
+    print(f"\nvalidating on {len(pairs)} roleplaying answers ({a.eval}; "
+          f"{n_dec} deceptive, {len(pairs)-n_dec} honest)")
     Es, eys = [], []
-    for n, (sysm, q, comp, lab) in enumerate(ev):
-        A = acts_at(model, tok, chat(q, system=sysm + "\n\n" + RP_POSTFIX), comp, layers, pool=True)
+    for n, (pre, txt, lab) in enumerate(pairs):
+        A = acts_at(model, tok, pre, txt, layers, pool=True)
         if A is None:
             continue
         Es.append(A.numpy()); eys.append(lab)
         if (n + 1) % 200 == 0:
-            print(f"   {n+1}/{len(ev)}", flush=True)
+            print(f"   {n+1}/{len(pairs)}", flush=True)
     E = np.stack(Es); ey = np.array(eys)
 
     print(f"\n{'layer':>6} {'RepE held-out':>14} {'roleplay lr':>12} {'roleplay mms':>13}")
@@ -265,7 +283,7 @@ def main() -> None:
                 "scale": torch.tensor(sd), "mms": torch.tensor(d), "model_id": model_id,
                 "auroc_repe_heldout": A_held, "auroc_roleplaying_lr": A_lr,
                 "auroc_roleplaying_mms": A_mms, "reg_coeff": a.reg_coeff,
-                "repe_variant": a.repe_variant, "think": a.think,
+                "repe_variant": a.repe_variant, "think": a.think, "eval": a.eval,
                 "n_train_tokens": int(X.shape[0]),
                 "note": "positive score = more deceptive; layer chosen on held-out RepE"}, a.out)
     print(f"\nlayer {L} (chosen on held-out RepE {A_held:.3f}): "
