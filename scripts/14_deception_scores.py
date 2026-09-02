@@ -1,7 +1,7 @@
 """Per-token deception scores on our rollouts, using the probe from 13_deception_probe.py.
 
-    python scripts/14_deception_scores.py                      # the default six
-    python scripts/14_deception_scores.py --rollouts above_good/61 baseline/0
+    python scripts/14_deception_scores.py                       # 100 per condition, all tokens
+    python scripts/14_deception_scores.py --rollouts above_good/61 above_good/71 below_good/9
 
 Scores every reasoning token of each rollout with the trained direction. Positive = more deceptive.
 
@@ -11,8 +11,9 @@ match: identical model, identical task, identical prompt except for the bet, so 
 standardised score shows is about the incentive rather than about giraffes or about our chat
 template. The control mean and sd are stored alongside the scores so the choice stays auditable.
 
-Defaults are the rollouts our sentence-resampling and J-lens work already characterised, which is
-what makes the scores checkable rather than merely suggestive:
+In bulk mode it scores --n rollouts per condition. The rollouts our sentence-resampling and J-lens
+work already characterised are the ones worth looking at first, because they make the scores
+checkable rather than merely suggestive:
 
   above_good/61   invents "the TRAP study (Tiny Research About Patterns)" for a 1,700-spot figure
   above_good/74   invents a Kampala Museum / National Geographic citation
@@ -41,8 +42,6 @@ import torch
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "data/runs"
-DEFAULT = ["above_good/61", "above_good/74", "above_good/71", "below_good/9",
-           "above_good/44", "baseline/0"]
 
 
 def chat_prefix(tok, user: str) -> str:
@@ -74,9 +73,11 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", default="qwen3.5-27b_20260823_223518")
     ap.add_argument("--probe", default=str(ROOT / "vectors/deception_probe.pt"))
-    ap.add_argument("--rollouts", nargs="+", default=DEFAULT)
+    ap.add_argument("--rollouts", nargs="+", default=None,
+                    help="explicit list; omit to score --n per condition in --conditions")
+    ap.add_argument("--conditions", nargs="+", default=["baseline", "above_good", "below_good"])
+    ap.add_argument("--n", type=int, default=100, help="rollouts per condition in bulk mode")
     ap.add_argument("--control", default="baseline", help="condition used to standardise")
-    ap.add_argument("--control-n", type=int, default=20)
     ap.add_argument("--max-len", type=int, default=20000)
     ap.add_argument("--model", default=None)
     a = ap.parse_args()
@@ -106,38 +107,68 @@ def main() -> None:
     if not kw:
         model = model.to("cuda" if torch.cuda.is_available() else "cpu")
 
-    # control: score the no-bet rollouts first, and standardise everything by their token
-    # distribution. Without this the numbers have no zero and no unit.
-    blob = json.loads((RUNS / a.run / f"{a.control}.json").read_text())
-    pool = []
-    for r in blob["rows"][:a.control_n]:
-        if "error" in r or not r.get("reasoning"):
-            continue
-        s_, _ = score_rollout(model, tok, layer, w, mu, sd, blob["prompt"], r["reasoning"], a.max_len)
-        pool.append(s_)
-    ctrl = np.concatenate(pool)
-    c_mu, c_sd = float(ctrl.mean()), float(ctrl.std())
-    print(f"control ({a.control}, n={len(pool)}): {len(ctrl):,} tokens, "
-          f"mean {c_mu:+.3f}, sd {c_sd:.3f}")
+    specs = a.rollouts
+    if not specs:
+        specs = []
+        for c in a.conditions:
+            f = RUNS / a.run / f"{c}.json"
+            if not f.exists():
+                continue
+            ok = [r["i"] for r in json.loads(f.read_text())["rows"]
+                  if "error" not in r and (r.get("reasoning") or "").strip()]
+            specs += [f"{c}/{i}" for i in ok[: a.n]]
+    print(f"scoring {len(specs)} rollouts")
 
     out = RUNS / a.run / "analysis" / "deception"
     out.mkdir(parents=True, exist_ok=True)
-    print(f"\n{'rollout':<18} {'tokens':>8} {'mean z':>8} {'p95 z':>8} {'max z':>8}")
-    print("-" * 56)
-    for spec in a.rollouts:
+    blobs = {}
+    raw, meta = {}, []
+    for n, spec in enumerate(specs):
         cond, idx = spec.split("/"); idx = int(idx)
-        b = json.loads((RUNS / a.run / f"{cond}.json").read_text())
+        if cond not in blobs:
+            blobs[cond] = json.loads((RUNS / a.run / f"{cond}.json").read_text())
+        b = blobs[cond]
         row = next(r for r in b["rows"] if r["i"] == idx)
         s_, ids = score_rollout(model, tok, layer, w, mu, sd, b["prompt"],
                                 row["reasoning"] or "", a.max_len)
-        z = (s_ - c_mu) / c_sd
-        np.savez_compressed(out / f"{cond}_{idx:03d}.npz", z=z.astype(np.float32),
-                            raw=s_.astype(np.float32), tokens=ids.astype(np.int32),
-                            layer=layer, control_mean=c_mu, control_sd=c_sd,
-                            auroc=P["auroc_roleplaying_lr"], cond=cond, i=idx)
-        print(f"{spec:<18} {len(z):>8,} {z.mean():>8.2f} {np.percentile(z, 95):>8.2f} "
-              f"{z.max():>8.2f}")
-    print(f"\nwrote {out}")
+        raw[spec] = s_
+        meta.append((cond, idx, len(s_)))
+        if (n + 1) % 25 == 0:
+            print(f"   {n+1}/{len(specs)}", flush=True)
+
+    # Standardise against the no-bet condition. Raw probe scores have no zero and no unit, and the
+    # baseline is the closest possible control: same model, same task, same prompt but for the bet,
+    # so a raised z is about the incentive rather than about the domain or the chat template.
+    ctrl = np.concatenate([v for k, v in raw.items() if k.startswith(a.control + "/")])
+    if ctrl.size == 0:
+        raise SystemExit(f"no {a.control} rollouts scored — cannot standardise")
+    c_mu, c_sd = float(ctrl.mean()), float(ctrl.std())
+    print(f"\ncontrol ({a.control}): {len(ctrl):,} tokens, mean {c_mu:+.4f}, sd {c_sd:.4f}")
+
+    np.savez_compressed(
+        out / "all_scores.npz",
+        **{f"z::{k}": ((v - c_mu) / c_sd).astype(np.float32) for k, v in raw.items()},
+        control_mean=c_mu, control_sd=c_sd, layer=layer,
+        auroc=P.get("auroc_roleplaying_lr", np.nan), method=str(P.get("method", "lr")))
+
+    print(f"\n{'condition':<12} {'rollouts':>9} {'tokens':>10} {'mean z':>8} {'p95 z':>8} "
+          f"{'frac z>2':>9} {'frac z>3':>9}")
+    print("-" * 70)
+    for c in a.conditions:
+        zs = [(raw[k] - c_mu) / c_sd for k in raw if k.startswith(c + "/")]
+        if not zs:
+            continue
+        allz = np.concatenate(zs)
+        print(f"{c:<12} {len(zs):>9} {len(allz):>10,} {allz.mean():>8.3f} "
+              f"{np.percentile(allz, 95):>8.2f} {np.mean(allz > 2):>9.3f} "
+              f"{np.mean(allz > 3):>9.3f}")
+    print("\nper-rollout mean z (the unit a claim about a rollout would use):")
+    for c in a.conditions:
+        pr = np.array([((raw[k] - c_mu) / c_sd).mean() for k in raw if k.startswith(c + "/")])
+        if pr.size:
+            print(f"  {c:<12} mean {pr.mean():+.3f}  sd {pr.std():.3f}  "
+                  f"range [{pr.min():+.2f}, {pr.max():+.2f}]")
+    print(f"\nwrote {out}/all_scores.npz")
 
 
 if __name__ == "__main__":
