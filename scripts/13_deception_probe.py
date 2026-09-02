@@ -31,6 +31,12 @@ Sign convention: POSITIVE score = more deceptive.
 
 Their layer 22 of 80 is 27.5% of depth; the same fraction here is ~18 of 64. --sweep checks a range
 rather than assuming the fraction transfers, since it is one number read off a different model.
+
+KNOWN LIMITATION, worth stating before the numbers arrive: training and validation both use plain
+assertions outside a reasoning block, while 14_deception_scores.py applies the probe to tokens
+INSIDE one. The roleplaying AUROC therefore does not test that transfer. A high AUROC means the
+direction separates honest from deceptive assertions; whether it means anything on reasoning tokens
+is a separate question, and the no-bet control in the scoring script is what keeps that honest.
 """
 
 from __future__ import annotations
@@ -159,10 +165,20 @@ def main() -> None:
     print(f"model {model_id}: {n_blocks} blocks | layers {layers} | reg_coeff {a.reg_coeff}")
 
     def chat(user: str, system: str | None = None) -> str:
+        """Prefix that puts the assistant OUTSIDE a reasoning block.
+
+        Qwen3.5 is a thinking model, so add_generation_prompt=True can leave a dangling <think>.
+        Appending the statement there would train the probe on activations inside a reasoning block
+        rather than on a direct assertion — Apollo's llama setup has no such block, and the RepE
+        design depends on the statement being the model's spoken claim. Any trailing <think> is
+        removed and replaced with a closed empty one.
+        """
         msgs = ([{"role": "system", "content": system}] if system else []) + \
                [{"role": "user", "content": user}]
-        t = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
-        return t + ("" if t.rstrip().endswith("<think>") else "<think>\n\n</think>\n\n")
+        t = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True).rstrip()
+        if t.endswith("<think>"):
+            t = t[: -len("<think>")].rstrip()
+        return t + "\n<think>\n\n</think>\n\n"
 
     print("\n--- rendered training prefix (check the template) ---")
     print(repr(chat(DECEPTIVE_MSG))[:400])
