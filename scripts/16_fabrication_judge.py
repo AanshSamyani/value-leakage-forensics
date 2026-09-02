@@ -88,7 +88,15 @@ def rollouts(run: Path, conds, limit: int):
 
 async def main_async(a) -> None:
     run = ROOT / "data/runs" / a.run
+    if not run.exists():
+        avail = sorted(x.name for x in (ROOT / "data/runs").iterdir()
+                       if x.is_dir() and (x / "estimates.json").exists())
+        raise SystemExit(f"no run at {run}\n  available: " + "\n             ".join(avail) +
+                         "\n  (the pooled corpus is built by analysis/merge_runs.py — it is "
+                         "derived, so it is not in git)")
     items = rollouts(run, CONDS, a.limit)
+    if not items:
+        raise SystemExit(f"{run} has no rollouts with reasoning text")
     chars = sum(len(t) for _, _, t in items)
     print(f"{len(items)} rollouts, {chars/1e6:.1f}M chars ~= {chars/3.6/1e6:.1f}M input tokens")
     if not a.report:
@@ -122,6 +130,9 @@ async def main_async(a) -> None:
 
 
 def report(run: Path, labels: dict) -> None:
+    if not labels:
+        print("no labels to report")
+        return
     est = json.loads((run / "estimates.json").read_text())
     T = float(json.loads((run / "threshold.json").read_text())["threshold"])
     rng = np.random.default_rng(0)
