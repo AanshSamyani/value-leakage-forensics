@@ -143,18 +143,40 @@ def report(run: Path, labels: dict) -> None:
     est = json.loads((run / "estimates.json").read_text())
     T = float(json.loads((run / "threshold.json").read_text())["threshold"])
     rng = np.random.default_rng(0)
-    print(f"\n{'condition':<12} {'n':>5} {'any':>7} {'source':>8} {'detail':>8} {'adjust':>8}")
-    print("-" * 52)
-    per_cond = {}
+    CATS = ("fabricated_source", "fabricated_detail", "invented_adjustment")
+    print("\nROLLOUTS containing at least one, and the RATE")
+    print(f"{'condition':<12} {'n':>5} {'any':>12} {'source':>13} {'detail':>13} {'adjust':>12}")
+    print("-" * 72)
+    per_cond, tot = {}, {c: 0 for c in CATS}
     for c in CONDS:
         ks = [k for k in labels if k.startswith(c + "/")]
         if not ks:
             continue
-        has = lambda cat: np.mean([any(i.get("category") == cat for i in labels[k]) for k in ks])
-        anyf = np.mean([len(labels[k]) > 0 for k in ks])
-        per_cond[c] = (ks, anyf)
-        print(f"{c:<12} {len(ks):>5} {anyf:>7.3f} {has('fabricated_source'):>8.3f} "
-              f"{has('fabricated_detail'):>8.3f} {has('invented_adjustment'):>8.3f}")
+        per_cond[c] = ks
+        cells = []
+        for cat in CATS:
+            n = sum(1 for k in ks if any(i.get("category") == cat for i in labels[k]))
+            cells.append(f"{n:>5}/{len(ks)} {n/len(ks):.2f}" if cat != "invented_adjustment"
+                         else f"{n:>4}/{len(ks)} {n/len(ks):.2f}")
+        na = sum(1 for k in ks if labels[k])
+        print(f"{c:<12} {len(ks):>5} {na:>5}/{len(ks)} {na/len(ks):.2f} " + " ".join(cells))
+
+    print("\nTOTAL fabrications (a rollout can contain several)")
+    print(f"{'condition':<12} {'items':>7} {'source':>8} {'detail':>8} {'adjust':>8} "
+          f"{'per rollout':>12} {'max in one':>11}")
+    print("-" * 74)
+    for c, ks in per_cond.items():
+        cnt = {cat: sum(1 for k in ks for i in labels[k] if i.get("category") == cat)
+               for cat in CATS}
+        alln = sum(len(labels[k]) for k in ks)
+        for cat in CATS:
+            tot[cat] += cnt[cat]
+        print(f"{c:<12} {alln:>7} {cnt['fabricated_source']:>8} {cnt['fabricated_detail']:>8} "
+              f"{cnt['invented_adjustment']:>8} {alln/len(ks):>12.2f} "
+              f"{max(len(labels[k]) for k in ks):>11}")
+    gtot = sum(tot.values())
+    print(f"{'ALL':<12} {gtot:>7} {tot['fabricated_source']:>8} {tot['fabricated_detail']:>8} "
+          f"{tot['invented_adjustment']:>8}")
 
     # a few flagged quotes, because a rate is uninterpretable until you can see what is being
     # counted — 100% "fabricated_source" means one thing if the quotes are invented spot-count
