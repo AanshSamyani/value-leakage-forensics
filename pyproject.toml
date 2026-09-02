@@ -21,6 +21,8 @@ tinker = ["tinker", "tinker-cookbook"]
 # refuses to do without accelerate. torch/transformers themselves are installed per-host by
 # runpod_setup.sh against that pod's CUDA, so they are deliberately not pinned here.
 readout = ["accelerate>=0.30"]
+# 13_deception_probe.py: LogisticRegression + StandardScaler, matching Apollo's detectors.py
+probe = ["accelerate>=0.30", "scikit-learn>=1.3", "pyyaml>=6.0"]
 
 [build-system]
 requires = ["setuptools>=68"]
