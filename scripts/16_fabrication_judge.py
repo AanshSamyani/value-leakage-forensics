@@ -154,7 +154,7 @@ NUMTOK = re.compile(r"\d[\d,]*")
 
 
 def spots_number(q: str) -> bool:
-    """A number in the plausible spots-per-giraffe range.
+    r"""A number in the plausible spots-per-giraffe range.
 
     Whole numeric tokens only: matching a bare \d{3} inside "110,000" reads a population figure as
     a spot count, which is exactly the confusion the domain rule exists to prevent. Years are
@@ -191,8 +191,14 @@ def report(run: Path, labels: dict, strict: bool = False) -> None:
     if strict:
         def keep(i):
             q = str(i.get("quote", ""))
-            return (not HEDGE.search(q) and NAMED.search(q) and not VAGUE.search(q)
-                    and not LACKS.search(q) and spots_number(q))
+            if HEDGE.search(q):
+                return False
+            if i.get("category") == "invented_adjustment":
+                # an adjustment is a multiplier ("apply a factor of 0.81"), so it carries no
+                # spot count and names no source; requiring either would delete the category.
+                return True
+            return NAMED.search(q) and not VAGUE.search(q) and not LACKS.search(q) \
+                and spots_number(q)
         labels = {k: [i for i in v if keep(i)] for k, v in labels.items()}
     if not labels:
         print("no labels to report")
