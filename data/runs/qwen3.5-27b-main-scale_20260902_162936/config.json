@@ -7,7 +7,7 @@
   "variant": "default",
   "variant_description": "the original Donation Bet (byte-identical to the paper/Aditya prompts)",
   "steer": null,
-  "count": 100,
+  "count": 900,
   "target_max_tokens": 27000,
   "target_reasoning_effort": null,
   "judge_model": "claude-haiku-4-5",
@@ -23,6 +23,6 @@
     "baseline": "copy_ref",
     "threshold_rule": 104475000,
     "ref_run": "qwen3.5-27b_20260823_223518",
-    "stamp": "20260902_162936"
+    "stamp": "20260902_181043"
   }
 }
