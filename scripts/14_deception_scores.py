@@ -83,10 +83,14 @@ def main() -> None:
 
     P = torch.load(a.probe, map_location="cpu", weights_only=False)
     layer = int(P["layer"]); w = P["w"].numpy(); mu = P["mean"].numpy(); sd = P["scale"].numpy()
-    print(f"probe: layer {layer}, roleplaying AUROC {P['auroc_roleplaying_lr']:.3f} (lr) / "
-          f"{P['auroc_roleplaying_mms']:.3f} (mms)")
-    if P["auroc_roleplaying_lr"] < 0.8:
-        print("WARNING: the probe did not validate — these scores are not worth reading.")
+    print(f"probe: layer {layer}, RepE held-out {P.get('auroc_repe_heldout', float('nan')):.3f}, "
+          f"roleplaying {P['auroc_roleplaying_lr']:.3f} (lr) / {P['auroc_roleplaying_mms']:.3f} (mms)")
+    if P.get("auroc_repe_heldout", 1.0) < 0.85:
+        print("WARNING: the probe did not learn the honest/deceptive framing on held-out RepE. "
+              "These scores are noise.")
+    elif P["auroc_roleplaying_lr"] < 0.8:
+        print("NOTE: RepE held-out is fine but roleplaying transfer is weak. The scores below may "
+              "still be readable, but treat cross-dataset claims with care.")
 
     cfg = json.loads((RUNS / a.run / "config.json").read_text())
     model_id = a.model or cfg.get("model_id") or cfg["model"]
