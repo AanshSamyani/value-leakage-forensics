@@ -144,7 +144,8 @@ def setup(jobs: list[Job], facts: dict, args, stamp: str) -> dict[str, Path]:
         write_json(rd / "config.json", {
             "model": f"{slug}-{job.name}", "model_id": args.model, "backend": "vllm_offline",
             "provider": None, "task": variant.question, "variant": job.variant,
-            "variant_description": variant.description, "steer": None, "count": args.count,
+            "variant_description": variant.description, "steer": None,
+            "count": job.count or args.count,
             "target_max_tokens": args.max_tokens, "target_reasoning_effort": None,
             "judge_model": args.judge_model, "temperature": args.temperature, "top_p": args.top_p,
             "batch": {"item": job.item, "note": job.note, "conditions": job.conditions,
@@ -179,7 +180,8 @@ def build_tasks(jobs: list[Job], dirs: dict[str, Path], args, wave: int) -> list
 # ---------------------------------------------------------------------------
 
 async def generate(sampler, tasks: list[Task], count: int, chunk: int, label: str) -> None:
-    units = [(t, i) for t in tasks for i in t.missing(count)]
+    cnt = lambda t: (t.job.count or count)          # noqa: E731 — per-job override wins
+    units = [(t, i) for t in tasks for i in t.missing(cnt(t))]
     done_already = sum(len(t.rows) for t in tasks)
     if not units:
         log(f"{label}: nothing to generate ({done_already} rollouts already on disk)")
@@ -196,7 +198,7 @@ async def generate(sampler, tasks: list[Task], count: int, chunk: int, label: st
             touched.add(id(task))
         for task in tasks:                       # checkpoint every condition this chunk touched
             if id(task) in touched:
-                task.write(count)
+                task.write(cnt(task))
         n_done = start + len(batch)
         el = time.time() - t0
         rate = n_done / el

@@ -48,7 +48,7 @@ class Job:
     threshold: int | str             # int | "ref" | "baseline_median"
     baseline: str                    # "copy_ref" | "generate" | "none"
     item: str = ""                   # which of the user's 1a-1g items this serves
-    count: int = 100
+    count: int | None = None         # per-job override; None -> the runner's --count
     note: str = ""
     extra: dict = field(default_factory=dict)
 
