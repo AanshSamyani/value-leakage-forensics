@@ -204,8 +204,9 @@ def main() -> None:
             t = t[: -len("<think>")].rstrip()
         return t + "\n<think>\n\n</think>\n\n"
 
+    _d_sys, _d_usr = REPE_VARIANTS[a.repe_variant][2], REPE_VARIANTS[a.repe_variant][3]
     print("\n--- rendered training prefix (check the template) ---")
-    print(repr(chat(DECEPTIVE_MSG))[:400])
+    print(repr(chat(_d_usr, system=_d_sys))[:400])
 
     tr = repe_examples(a.repe_variant)
     print(f"\ntraining on {len(tr)} RepE dialogues, variant {a.repe_variant!r}, "
