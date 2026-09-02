@@ -1,6 +1,6 @@
 """Generate the model's OWN roleplaying answers and grade them, for on-policy probe validation.
 
-    python scripts/15_roleplaying_onpolicy.py                 # vLLM, ~5 min + judging
+    python scripts/15_roleplaying_onpolicy.py                 # transformers, ~10 min + judging
 
 Why this exists. Training the probe on RepE gives held-out AUROC of 1.000 from layer 22 up, while
 off-policy roleplaying sits at 0.67-0.75. That is a generalisation gap, not a broken probe — and the
@@ -14,6 +14,10 @@ that near-perfect score by detecting which instruction was given rather than by 
 anything about deception. On-policy roleplaying has no such instruction to read — the scenario
 motivates a lie but never labels it — so it tests whether the direction survives when the shortcut
 is removed.
+
+Generation runs through transformers rather than vLLM, with thinking disabled: these answers must
+match the format the probe was trained on (a spoken assertion, not a reasoning trace), and 371 short
+completions do not justify a second engine boot.
 
 Grading follows their RESPONSE_MODEL_GRADED_TEMPLATE verbatim, with claude-haiku-4-5 in place of
 gpt-4o. Their `unambiguous` field is kept and used: responses the grader calls ambiguous are dropped
@@ -61,29 +65,62 @@ async def main_async(a) -> None:
         scen = scen[: a.limit]
     print(f"{len(scen)} scenarios")
 
-    from forensics.samplers.vllm_offline import VLLMOfflineSampler
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
     cfg = json.loads((ROOT / "data/runs" / a.run / "config.json").read_text())
     model_id = a.model or cfg.get("model_id") or cfg["model"]
-    sampler = VLLMOfflineSampler(model=model_id, max_tokens=a.max_tokens, temperature=1.0,
-                                 top_p=1.0, max_model_len=a.max_model_len,
-                                 gpu_memory_utilization=a.gpu_mem, max_num_seqs=a.max_num_seqs)
-    from transformers import AutoTokenizer
-    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True, padding_side="left")
+    if tok.pad_token_id is None:
+        tok.pad_token = tok.eos_token
+    try:
+        import accelerate  # noqa: F401
+        kw = {"device_map": "auto"}
+    except ImportError:
+        kw = {}
+    model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16,
+                                                 trust_remote_code=True, **kw).eval()
+    if not kw:
+        model = model.to("cuda" if torch.cuda.is_available() else "cpu")
+    dev = next(model.parameters()).device
 
-    prefixes, prompts = [], []
+    def render(msgs) -> str:
+        """No thinking mode: Qwen3 templates take enable_thinking; older ones do not, so fall back
+        to closing the block by hand. Either way the answer must be a spoken reply, because that is
+        what the probe was trained on."""
+        try:
+            t = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True,
+                                        enable_thinking=False)
+        except TypeError:
+            t = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True)
+        t = t.rstrip()
+        if t.endswith("<think>"):
+            t = t[: -len("<think>")].rstrip()
+        if not t.endswith("</think>"):
+            t = t + "\n<think>\n\n</think>"
+        return t + "\n\n"
+
+    prefixes = []
     for d in scen:
         msgs = [{"role": "system", "content": d["scenario"] + "\n\n" + POSTFIX},
                 {"role": "user", "content": d["question"]}]
-        t = tok.apply_chat_template(msgs, tokenize=False, add_generation_prompt=True).rstrip()
-        if t.endswith("<think>"):
-            t = t[: -len("<think>")].rstrip()
-        # closed empty think block, matching how the probe was trained: a spoken answer, not
-        # a reasoning trace. The answer_prefix ("Student:") is part of the scored text.
-        t = t + "\n<think>\n\n</think>\n\n" + d.get("answer_prefix", "")
-        prefixes.append(t); prompts.append(t)
-    outs = sampler.generate_raw(prompts, max_tokens=a.max_tokens, temperature=1.0,
-                                top_p=1.0, use_tqdm=True)
-    answers = [(o.outputs[0].text or "").strip() for o in outs]
+        prefixes.append(render(msgs) + d.get("answer_prefix", ""))
+    print("\n--- rendered prefix (no thinking) ---")
+    print(repr(prefixes[0])[:420])
+
+    answers = []
+    for s0 in range(0, len(prefixes), a.batch):
+        batch = prefixes[s0:s0 + a.batch]
+        enc = tok(batch, return_tensors="pt", padding=True, add_special_tokens=False).to(dev)
+        with torch.no_grad():
+            out = model.generate(**enc, max_new_tokens=a.max_tokens, do_sample=True,
+                                 temperature=1.0, top_p=1.0, pad_token_id=tok.pad_token_id)
+        gen = out[:, enc["input_ids"].shape[1]:]
+        answers += [tok.decode(g, skip_special_tokens=True).strip() for g in gen]
+        print(f"   {min(s0 + a.batch, len(prefixes))}/{len(prefixes)}", flush=True)
+    n_think = sum(1 for x in answers if "<think>" in x)
+    print(f"generated {len(answers)} answers; {n_think} still contain a <think> tag "
+          f"(should be 0)")
+    print(f"example: {answers[0][:200]!r}")
 
     from forensics.judges.anthropic_judge import AnthropicJudge
     judge = AnthropicJudge(model=a.judge_model,
@@ -127,10 +164,8 @@ def main() -> None:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--run", default="qwen3.5-27b_20260823_223518")
     ap.add_argument("--limit", type=int, default=0)
-    ap.add_argument("--max-tokens", type=int, default=400)
-    ap.add_argument("--max-model-len", type=int, default=4096)
-    ap.add_argument("--max-num-seqs", type=int, default=128)
-    ap.add_argument("--gpu-mem", type=float, default=0.90)
+    ap.add_argument("--max-tokens", type=int, default=300)
+    ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--min-unambiguous", type=float, default=4.0)
     ap.add_argument("--judge-model", default="claude-haiku-4-5")
     ap.add_argument("--concurrency", type=int, default=16)
