@@ -12,3 +12,6 @@ data/aditya_repo/
 # judge caches are large; keep the aggregated json files in the run dir instead
 **/judge_cache/
 .DS_Store
+
+# fetched on demand by the viewers (12.8 MB)
+data/deception/tokenizer.json

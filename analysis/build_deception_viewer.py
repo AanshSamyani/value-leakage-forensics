@@ -27,8 +27,20 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "data/runs"
-TOKJSON = Path("/private/tmp/claude-501/-Users-aanshsamyani-Documents-value-leakage/"
-               "f07fda8e-5c70-409a-b3f0-c4510a29b5e2/scratchpad/tokenizer.json")
+TOKJSON = ROOT / "data/deception/tokenizer.json"
+TOK_URL = "https://huggingface.co/Qwen/Qwen3.5-27B/resolve/main/tokenizer.json"
+
+
+def load_tokenizer():
+    """`tokenizers` needs the raw tokenizer.json, so this works without transformers or a GPU —
+    the viewer should build on a laptop from a pushed npz. Cached locally, gitignored (12.8 MB)."""
+    from tokenizers import Tokenizer
+    if not TOKJSON.exists():
+        import urllib.request
+        TOKJSON.parent.mkdir(parents=True, exist_ok=True)
+        print(f"fetching {TOK_URL}")
+        urllib.request.urlretrieve(TOK_URL, TOKJSON)
+    return Tokenizer.from_file(str(TOKJSON))
 LAB = {"baseline": "no bet", "above_good": "above-good", "below_good": "below-good"}
 E = html.escape
 CSS = """
@@ -135,8 +147,7 @@ def main() -> None:
     has_tok = any(k.startswith("t::") for k in d.files)
     T = float(json.loads((run / "threshold.json").read_text())["threshold"])
     est = json.loads((run / "estimates.json").read_text())
-    from tokenizers import Tokenizer
-    tok = Tokenizer.from_file(str(TOKJSON))
+    tok = load_tokenizer()
 
     keys = sorted(k[3:] for k in d.files if k.startswith("z::"))
     rows = []
