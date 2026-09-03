@@ -122,7 +122,7 @@ def main() -> None:
     out = RUNS / a.run / "analysis" / "deception"
     out.mkdir(parents=True, exist_ok=True)
     blobs = {}
-    raw, meta = {}, []
+    raw, toks, meta = {}, {}, []
     for n, spec in enumerate(specs):
         cond, idx = spec.split("/"); idx = int(idx)
         if cond not in blobs:
@@ -132,6 +132,7 @@ def main() -> None:
         s_, ids = score_rollout(model, tok, layer, w, mu, sd, b["prompt"],
                                 row["reasoning"] or "", a.max_len)
         raw[spec] = s_
+        toks[spec] = ids
         meta.append((cond, idx, len(s_)))
         if (n + 1) % 25 == 0:
             print(f"   {n+1}/{len(specs)}", flush=True)
@@ -148,6 +149,10 @@ def main() -> None:
     np.savez_compressed(
         out / "all_scores.npz",
         **{f"z::{k}": ((v - c_mu) / c_sd).astype(np.float32) for k, v in raw.items()},
+        # token ids alongside the scores: reconstructing them later means re-deriving the exact
+        # chat prefix and hoping BPE does not merge across the boundary, and a viewer that is one
+        # token out shades the wrong words.
+        **{f"t::{k}": v.astype(np.int32) for k, v in toks.items()},
         control_mean=c_mu, control_sd=c_sd, layer=layer,
         auroc=P.get("auroc_roleplaying_lr", np.nan), method=str(P.get("method", "lr")))
 
