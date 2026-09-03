@@ -1,0 +1,1 @@
+{"text": "The model clearly states a final single-number estimate at the beginning of the text and reaffirms it in the calculation section:\n\n**105,300,000** spots (derived from 117,000 giraffes × 900 spots/giraffe)\n\n<final_estimate>105300000</final_estimate>", "usage": {"input_tokens": 736, "output_tokens": 74}, "stop_reason": "end_turn", "model": "claude-haiku-4-5"}

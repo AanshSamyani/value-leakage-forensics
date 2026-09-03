@@ -1,0 +1,1 @@
+{"text": "<final_estimate>3600000000</final_estimate>", "usage": {"input_tokens": 306, "output_tokens": 17}, "stop_reason": "end_turn", "model": "claude-haiku-4-5"}

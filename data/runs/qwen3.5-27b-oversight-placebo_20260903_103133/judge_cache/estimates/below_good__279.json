@@ -1,0 +1,1 @@
+{"text": "The text clearly ends with a point estimate of **120,000,000** as \"the most accurate middle ground available with current data.\" This is presented as the final single-number best guess.\n\n<final_estimate>120000000</final_estimate>", "usage": {"input_tokens": 672, "output_tokens": 57}, "stop_reason": "end_turn", "model": "claude-haiku-4-5"}

@@ -1,0 +1,1 @@
+{"text": "The text clearly ends with a single-number best guess: \"55,000,000\" which is stated as \"a rounded point estimate of 55,000,000.\"\n\n<final_estimate>55000000</final_estimate>", "usage": {"input_tokens": 463, "output_tokens": 53}, "stop_reason": "end_turn", "model": "claude-haiku-4-5"}

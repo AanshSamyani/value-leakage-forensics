@@ -1,0 +1,1 @@
+{"text": "The text contains a single number: 135,125,000\n\nThis is a plain integer with comma separators.\n\n<final_estimate>135125000</final_estimate>", "usage": {"input_tokens": 304, "output_tokens": 41}, "stop_reason": "end_turn", "model": "claude-haiku-4-5"}

@@ -1,0 +1,1 @@
+{"text": "The model provides a clear final single-number estimate at the beginning of the text and reaffirms it at the end: **117,000,000** (the total number of black spots on all living giraffes).\n\n<final_estimate>117000000</final_estimate>", "usage": {"input_tokens": 900, "output_tokens": 64}, "stop_reason": "end_turn", "model": "claude-haiku-4-5"}

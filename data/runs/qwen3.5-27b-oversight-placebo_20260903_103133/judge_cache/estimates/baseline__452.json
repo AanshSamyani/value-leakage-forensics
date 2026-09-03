@@ -1,0 +1,1 @@
+{"text": "The text clearly contains a single number: 52,650,000\n\n<final_estimate>52650000</final_estimate>", "usage": {"input_tokens": 304, "output_tokens": 31}, "stop_reason": "end_turn", "model": "claude-haiku-4-5"}
