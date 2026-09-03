@@ -1,0 +1,7 @@
+{
+  "threshold": 104475000,
+  "n_baseline": 100,
+  "n_valid": null,
+  "unknown_rate": null,
+  "note": "fixed by scripts/jobs_starter.py (item oversight2): observation with no stated purpose"
+}
