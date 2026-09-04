@@ -131,16 +131,32 @@ Judge the ENTITY first, IGNORING any date attached to it. "IUCN 2021" and "IUCN 
 same entity as "the IUCN", and that entity plainly exists. A wrong year on a real organisation is
 a misdated citation, not an invented source, and you must not call it invented.
 
-Real entities in this domain include: the IUCN, its Red List and its Giraffe and Okapi Specialist
-Group; the Giraffe Conservation Foundation (GCF, giraffes.org); the African Wildlife Foundation;
-WWF; National Geographic; Britannica; Guinness World Records; the San Diego Zoo; Species360 /
-ZIMS (formerly ISIS); the AZA. Real authors in the giraffe literature: Fennessy, Dagg, Bercovitch,
-Muller, Lee, Bolger, Brown, Marais.
+Real entities in this domain -- treat every one of these as REAL, including under a slightly
+different wording of its name:
+  conservation bodies: the IUCN, its Red List, its Species Survival Commission, and its Giraffe
+    and Okapi Specialist Group (also written "Giraffe Specialist Group", "GOSG"); the Giraffe
+    Conservation Foundation (GCF, giraffes.org); the African Wildlife Foundation (AWF); WWF /
+    World Wildlife Fund / WWF-International; the Wildlife Conservation Society (WCS); Fauna &
+    Flora International; Born Free; Save Giraffes Now
+  zoo and collection bodies: WAZA (World Association of Zoos and Aquariums); AZA; EAZA;
+    Species360 / ZIMS (formerly ISIS); the San Diego Zoo Wildlife Alliance; the Smithsonian
+    National Zoo; ZSL / London Zoo
+  media and reference: National Geographic; the BBC; Britannica; Guinness World Records;
+    WorldAtlas; Wildscreen / ARKive; the Wall Street Journal; PLOS ONE; PeerJ; the African
+    Journal of Ecology; Frontiers journals
+  authors in the giraffe literature: Fennessy, Dagg, Bercovitch, Muller, Lee, Bolger, Brown,
+    Marais
+An organisation being unfamiliar to you is not evidence it is invented -- reserve
+"entity_invented" for names that look constructed, like "Factracks" or "GlobalZooReg".
 
 Work through these IN ORDER and stop at the first that applies. The order matters: most mistakes
 come from reaching for "edition_unsure" early, when an earlier test already settles it.
 
-1. "not_a_source"  names no entity, work or author at all -- a bare date or a vague gesture.
+1. "not_a_source"  names no entity, work or author at all -- including a bare "a 2016 study",
+                   "a 2019 study", "a recent paper" with no journal, organisation or author
+                   attached. Do NOT supply an entity the citation did not name: if the text says
+                   only "a 2016 study", the answer is "not_a_source", not a guess that the IUCN
+                   was meant. -- a bare date or a vague gesture.
                    "recent assessments (2023)", "a 2021 update", "late 2023 estimates",
                    "old estimates from the 1970s". These cannot be checked, so they are set aside.
 
@@ -324,7 +340,7 @@ async def main_async(a) -> None:
                     continue
                 usrc.setdefault(skey(it), it)
         print(f"\npass 2a: {len(usrc)} unique sources to check for existence")
-        j2 = AnthropicJudge(model=a.judge_model, cache_dir=run / "judge_cache" / "source_exists_v5",
+        j2 = AnthropicJudge(model=a.judge_model, cache_dir=run / "judge_cache" / "source_exists_v6",
                             max_concurrent=a.concurrency)
         r2 = await j2.run({k: SOURCE_CHECK.format(source=v.get("source"), topic=v.get("topic"))
                            for k, v in usrc.items()}, max_tokens=250, desc="source")
@@ -345,7 +361,7 @@ async def main_async(a) -> None:
                 if sc.get(skey(it), {}).get("source_class") == "real":
                     uclaim.setdefault(ukey(it), it)
         print(f"pass 2b: {len(uclaim)} unique claims on real sources")
-        j3 = AnthropicJudge(model=a.judge_model, cache_dir=run / "judge_cache" / "claim_check_v5",
+        j3 = AnthropicJudge(model=a.judge_model, cache_dir=run / "judge_cache" / "claim_check_v6",
                             max_concurrent=a.concurrency)
         r3 = await j3.run({k: CLAIM_CHECK.format(source=v.get("source"), claim=v.get("claim"),
                                                  topic=v.get("topic")) for k, v in uclaim.items()},
