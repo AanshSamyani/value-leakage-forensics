@@ -4,7 +4,8 @@
 #   TRAIT=sycophantic nohup bash scripts/run_persona.sh > /workspace/logs/persona.log 2>&1 &
 #
 # Env: TRAIT (sycophantic), PCT (10 — steering strength as a % of the residual-stream norm),
-#      COUNT (100 rollouts per condition per steering arm), SKIP_STEER=1 to stop after scoring.
+#      COUNT (100 rollouts per condition per steering arm), SKIP_STEER=1 to stop after scoring,
+#      START_AT (1) to resume at a later step, LAYER_OVERRIDE to force the layer during extraction.
 #
 # Four steps, each usable on its own if a later one fails:
 #   1  extract + validate the vector on held-out questions      transformers, ~30 min
@@ -33,9 +34,15 @@ export VLLM_USE_FLASHINFER_SAMPLER=${VLLM_USE_FLASHINFER_SAMPLER:-0}
 step () { echo; echo "############################################################"; \
           echo "### [$(date +%H:%M:%S)] $*"; echo "############################################################"; }
 
-step "1/4  fetch data and extract the ${TRAIT} vector"
-bash scripts/setup_persona_data.sh "$TRAIT"
-python scripts/18_persona_vector.py --trait "$TRAIT" --run "$RUN" || { echo "!!! extraction FAILED"; exit 1; }
+START_AT=${START_AT:-1}
+if [ "$START_AT" -le 1 ]; then
+  step "1/4  fetch data and extract the ${TRAIT} vector"
+  bash scripts/setup_persona_data.sh "$TRAIT"
+  python scripts/18_persona_vector.py --trait "$TRAIT" --run "$RUN" ${LAYER_OVERRIDE:+--layer $LAYER_OVERRIDE} \
+      || { echo "!!! extraction FAILED"; exit 1; }
+else
+  step "1/4  skipped (START_AT=$START_AT); using the saved vector"
+fi
 LAYER=$(python -c "import torch;print(torch.load('$VEC',map_location='cpu',weights_only=False)['layer'])")
 AUROC=$(python -c "import torch;print(f\"{torch.load('$VEC',map_location='cpu',weights_only=False)['auroc_heldout']:.3f}\")")
 echo "vector at layer $LAYER, held-out AUROC $AUROC"

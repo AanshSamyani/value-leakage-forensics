@@ -187,6 +187,18 @@ def auroc(y, s):
     return (r[y == 1].sum() - n1 * (n1 + 1) / 2) / (n1 * n0) if n1 and n0 else float("nan")
 
 
+def pick_layer(tab, n_layers, override=None):
+    """AUROC saturates at 1.000 across most of the depth, so it cannot choose a layer — picking the
+    first maximum lands on layer 1, next to the embeddings, where the direction is reading the
+    system prompt's surface form rather than the behaviour. The correlation with the judge's trait
+    score does discriminate, so select on that, restricted to the middle of the network."""
+    if override is not None:
+        return next(t for t in tab if t[0] == override)
+    lo, hi = int(0.25 * n_layers), int(0.90 * n_layers)
+    ok = [t for t in tab if lo <= t[0] <= hi and t[1] >= 0.95]
+    return max(ok or tab, key=lambda t: t[2])
+
+
 def stage_extract(a, tok, model, rows):
     L = list(range(model.config.num_hidden_layers + 1))
     tr = pairs_of(rows, "extract", a.threshold)
@@ -220,19 +232,17 @@ def stage_extract(a, tok, model, rows):
     y = np.r_[np.ones(len(EP)), np.zeros(len(EN))]
     traits = np.r_[[t[0] for t in TS], [t[1] for t in TS]]
 
+    proj = np.stack([np.r_[(EP[:, li, :] @ V[li]).numpy(), (EN[:, li, :] @ V[li]).numpy()]
+                     for li in L])                                    # [layer, 2*n_eval]
+    tab = [(li, auroc(y, proj[li]), float(np.corrcoef(proj[li], traits)[0, 1])) for li in L]
     print(f"\n{'layer':>6} {'AUROC (pos vs neg)':>20} {'r(projection, trait score)':>28}")
     print("-" * 58)
-    best = None
-    for li in L:
-        v = V[li]
-        s = np.r_[(EP[:, li, :] @ v).numpy(), (EN[:, li, :] @ v).numpy()]
-        A = auroc(y, s)
-        r = float(np.corrcoef(s, traits)[0, 1])
-        if li % max(1, len(L) // 16) == 0 or (best and A > best[1]):
-            print(f"{li:>6} {A:>20.3f} {r:>28.3f}")
-        if best is None or A > best[1]:
-            best = (li, A, r)
-    li, A, r = best
+    for li, A_, r_ in tab:
+        if li % max(1, len(L) // 16) == 0:
+            print(f"{li:>6} {A_:>20.3f} {r_:>28.3f}")
+    li, A, r = pick_layer(tab, len(L), a.layer)
+    print(f"\nselected layer {li}" + ("  (--layer override)" if a.layer is not None else
+          "  (highest correlation among layers with AUROC >= 0.95, within 25-90% of depth)"))
     out = ROOT / "vectors" / f"persona_{a.trait}.pt"
     out.parent.mkdir(exist_ok=True)
     w = V[li].numpy()
@@ -242,6 +252,9 @@ def stage_extract(a, tok, model, rows):
                 "mms": torch.tensor(w),
                 "auroc_heldout": A, "r_trait_heldout": r,
                 "auroc_roleplaying_lr": A, "auroc_roleplaying_mms": A,
+                "layer_table": [(int(x), float(b), float(c)) for x, b, c in tab],
+                "eval_proj": torch.tensor(proj), "eval_traits": torch.tensor(traits),
+                "eval_labels": torch.tensor(y),
                 "n_effective_extract": len(P), "n_effective_eval": len(EP),
                 "threshold": a.threshold, "model_id": a.model_id,
                 "note": "positive = more of the trait; layer chosen by held-out AUROC"}, out)
@@ -249,6 +262,25 @@ def stage_extract(a, tok, model, rows):
     if A < 0.85:
         print("WARNING: the direction does not separate held-out responses. Downstream scores and "
               "steering would be reading noise.")
+
+
+def set_layer(a):
+    """Re-pick the layer on a saved vector. Every layer's vector is already in the file, so this is
+    a metadata rewrite — no model, no forward passes."""
+    f = ROOT / "vectors" / f"persona_{a.trait}.pt"
+    d = torch.load(f, map_location="cpu", weights_only=False)
+    li = a.set_layer
+    if li not in d["vectors"]:
+        raise SystemExit(f"layer {li} not in the saved vector (have 0..{max(d['vectors'])})")
+    w = d["vectors"][li].float()
+    row = next((t for t in d.get("layer_table", []) if t[0] == li), None)
+    if row:
+        d["auroc_heldout"], d["r_trait_heldout"] = row[1], row[2]
+        d["auroc_roleplaying_lr"] = d["auroc_roleplaying_mms"] = row[1]
+    d.update(layer=li, w=w, mms=w, mean=torch.zeros(len(w)), scale=torch.ones(len(w)))
+    torch.save(d, f)
+    print(f"{f}: layer -> {li}" + (f"  (AUROC {row[1]:.3f}, r {row[2]:.3f})" if row else
+                                   "  (no cached table; AUROC/r left as they were)"))
 
 
 async def main_async(a):
@@ -270,10 +302,17 @@ def main():
     ap.add_argument("--judge-model", default="claude-haiku-4-5")
     ap.add_argument("--concurrency", type=int, default=24)
     ap.add_argument("--force", action="store_true", help="ignore cached stage outputs")
+    ap.add_argument("--layer", type=int, default=None, help="override the selected layer")
+    ap.add_argument("--set-layer", type=int, default=None,
+                    help="re-point an already-saved vector at this layer and exit; no GPU, "
+                         "no recomputation")
     a = ap.parse_args()
     if not a.model_id:
         cfg = json.loads((ROOT / "data/runs" / a.run / "config.json").read_text())
         a.model_id = cfg.get("model_id") or cfg["model"]
+    if a.set_layer is not None:
+        set_layer(a)
+        return
     asyncio.run(main_async(a))
 
 
