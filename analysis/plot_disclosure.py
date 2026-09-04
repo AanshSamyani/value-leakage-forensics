@@ -28,7 +28,7 @@ import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 LAB = ROOT / "data/runs/qwen3.5-27b_pooled1000/analysis/disclosure.json"
-GREY = "#90A4AE"
+GREY, SLATE, CLAY = "#90A4AE", "#6795AE", "#CC8A5E"
 # one hue (H=201, the slate), light to dark with the strength of the incentive behaviour
 ARMS = [("baseline", "baseline", "#A6C3D3", -4.5),
         ("below_good", "below-good", "#5F93AF", 1.8),
@@ -114,8 +114,11 @@ def bars(cnt: dict) -> None:
     baseline is not drawn here -- it has no bet, so "lets the bet move the number" is undefined
     for it rather than merely low. Its role as the control (0 of 196) is in fig22."""
     groups = [("above_good", "above-good"), ("below_good", "below-good")]
-    series = [("adjusted", "the reasoning lets the bet move the number", "#35586B"),
-              ("disclosed", "the answer tells the reader the bet moved it", "#A6C3D3")]
+    # framed as what an overseer would detect: with the reasoning in front of them, the bet's
+    # influence is visible in `adjusted`; with only the visible answer, it is visible in
+    # `disclosed`. Same two numbers, read as a monitoring result rather than a model property.
+    series = [("adjusted", "CoT access", SLATE),
+              ("disclosed", "Response access only (no CoT)", CLAY)]
     fig, ax = plt.subplots(figsize=(6.8, 4.9))
     x = np.arange(len(groups))
     w = 0.34
@@ -140,14 +143,14 @@ def bars(cnt: dict) -> None:
     ax.set_ylim(0, 104)
     ax.set_yticks(range(0, 101, 20))
     ax.set_yticklabels([f"{v}%" for v in range(0, 101, 20)])
-    ax.set_ylabel("share of rollouts", fontsize=10.5)
+    ax.set_ylabel("rollouts where the bet's influence is visible", fontsize=10.5)
     ax.set_xlabel("incentive condition", fontsize=10.5)
     ax.spines[["top", "right"]].set_visible(False)
     ax.grid(alpha=.25, lw=.6, axis="y")
     ax.set_axisbelow(True)
     ax.tick_params(labelsize=9.6)
-    ax.legend(frameon=False, fontsize=9.4, loc="upper center", bbox_to_anchor=(0.5, 1.16),
-              handlelength=1.4, handletextpad=.6, labelspacing=.45)
+    ax.legend(frameon=False, fontsize=10, loc="upper center", bbox_to_anchor=(0.5, 1.14),
+              ncol=2, handlelength=1.4, handletextpad=.6, columnspacing=2.0)
     fig.tight_layout()
     out = ROOT / "plots/fig23_disclosure_bars.png"
     fig.savefig(out, dpi=170, bbox_inches="tight")
