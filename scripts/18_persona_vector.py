@@ -250,8 +250,8 @@ def stage_extract(a, tok, model, rows):
                 "layer": li, "method": "persona_diff_of_means", "trait": a.trait,
                 "w": torch.tensor(w), "mean": torch.zeros(len(w)), "scale": torch.ones(len(w)),
                 "mms": torch.tensor(w),
-                "auroc_heldout": A, "r_trait_heldout": r,
-                "auroc_roleplaying_lr": A, "auroc_roleplaying_mms": A,
+                "auroc_heldout": float(A), "r_trait_heldout": float(r),
+                "auroc_roleplaying_lr": float(A), "auroc_roleplaying_mms": float(A),
                 "layer_table": [(int(x), float(b), float(c)) for x, b, c in tab],
                 "eval_proj": torch.tensor(proj), "eval_traits": torch.tensor(traits),
                 "eval_labels": torch.tensor(y),
@@ -277,7 +277,12 @@ def set_layer(a):
     if row:
         d["auroc_heldout"], d["r_trait_heldout"] = row[1], row[2]
         d["auroc_roleplaying_lr"] = d["auroc_roleplaying_mms"] = row[1]
-    d.update(layer=li, w=w, mms=w, mean=torch.zeros(len(w)), scale=torch.ones(len(w)))
+    d.update(layer=int(li), w=w, mms=w, mean=torch.zeros(len(w)), scale=torch.ones(len(w)))
+    # numpy scalars in the metadata make torch.load fail under its weights_only default, which is
+    # what the steering calibrator hit. Coerce them on the way out.
+    for k, v in list(d.items()):
+        if isinstance(v, np.generic):
+            d[k] = v.item()
     torch.save(d, f)
     print(f"{f}: layer -> {li}" + (f"  (AUROC {row[1]:.3f}, r {row[2]:.3f})" if row else
                                    "  (no cached table; AUROC/r left as they were)"))

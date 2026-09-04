@@ -63,7 +63,7 @@ def describe(model):
 def install_steering(model, vec_path: str, layers: list[int], alpha: float):
     """Add alpha * v_layer to the residual stream at every position of each listed layer."""
     remove_all(model)
-    blob = torch.load(vec_path, map_location="cpu")
+    blob = torch.load(vec_path, map_location="cpu", weights_only=False)
     name, mods = find_decoder_layers(model)
     STATE["steer"] = {"alpha": float(alpha), "layers": [int(l) for l in layers], "vec_path": vec_path, "vecs": {}}
     for li in STATE["steer"]["layers"]:
@@ -112,7 +112,7 @@ def install_capture(model, layers: list[int], mode: str = "last", vec_path: str 
     layers = [int(l) for l in layers]
     cap = {"mode": mode, "layers": layers, "buf": {li: [] for li in layers}, "V": {}}
     if mode == "proj":
-        blob = torch.load(vec_path, map_location="cpu")
+        blob = torch.load(vec_path, map_location="cpu", weights_only=False)
         for li in layers:
             v = blob["vectors"][li].float()
             v = v / v.norm()

@@ -37,7 +37,7 @@ def main():
     d = Path(a.run) if Path(a.run).is_dir() else ROOT / "data/runs" / a.run
     cfg = json.loads((d / "config.json").read_text())
     model_id = a.model or cfg.get("model_id") or cfg["model"]
-    blob = torch.load(a.vector, map_location="cpu")
+    blob = torch.load(a.vector, map_location="cpu", weights_only=False)
     li = a.layer if a.layer is not None else int(blob["recommended_layers"][0])
     vn = float(blob["vectors"][li].float().norm())
 
