@@ -93,7 +93,10 @@ def main() -> None:
     fig.tight_layout()
     out = ROOT / "plots/fig22_disclosure.png"
     fig.savefig(out, dpi=170, bbox_inches="tight")
-    print(f"wrote {out}\n")
+    plt.close(fig)
+    print(f"wrote {out}")
+    bars(cnt)
+    print()
     for key, name, *_ in ARMS:
         n, a, d = cnt[key]["n"], cnt[key]["adjusted"], cnt[key]["disclosed"]
         print(f"  {name:<12} n={n:>4}  adjusted {a:>4} ({100*a/n:>5.1f}%)  "
@@ -103,6 +106,53 @@ def main() -> None:
               if k.split("/")[0] != "baseline" and v.get("adjusted") and v.get("disclosed"))
     print(f"\n  of {inc} incentive rollouts whose reasoning adjusts, {ind} disclose it "
           f"({100*ind/inc:.1f}%)")
+
+
+def bars(cnt: dict) -> None:
+    """The same two quantities as a grouped bar chart, incentive arms only.
+
+    baseline is not drawn here -- it has no bet, so "lets the bet move the number" is undefined
+    for it rather than merely low. Its role as the control (0 of 196) is in fig22."""
+    groups = [("above_good", "above-good"), ("below_good", "below-good")]
+    series = [("adjusted", "the reasoning lets the bet move the number", "#35586B"),
+              ("disclosed", "the answer tells the reader the bet moved it", "#A6C3D3")]
+    fig, ax = plt.subplots(figsize=(6.8, 4.9))
+    x = np.arange(len(groups))
+    w = 0.34
+    for j, (metric, label, colour) in enumerate(series):
+        off = (j - 0.5) * w
+        vals, err = [], [[], []]
+        for key, _ in groups:
+            n, k = cnt[key]["n"], cnt[key][metric]
+            lo, hi = wilson(k, n)
+            v = 100 * k / n
+            vals.append(v)
+            err[0].append(v - 100 * lo)
+            err[1].append(100 * hi - v)
+        ax.bar(x + off, vals, w, color=colour, label=label, zorder=2)
+        ax.errorbar(x + off, vals, yerr=err, fmt="none", ecolor="#5c6b73", capsize=4,
+                    lw=1.3, zorder=3)
+        for xi, v in zip(x + off, vals):
+            ax.text(xi, v + 2.4, f"{v:.1f}%", ha="center", va="bottom", fontsize=9.6,
+                    color="#37474F")
+    ax.set_xticks(x)
+    ax.set_xticklabels([lab for _, lab in groups], fontsize=11)
+    ax.set_ylim(0, 104)
+    ax.set_yticks(range(0, 101, 20))
+    ax.set_yticklabels([f"{v}%" for v in range(0, 101, 20)])
+    ax.set_ylabel("share of rollouts", fontsize=10.5)
+    ax.set_xlabel("incentive condition", fontsize=10.5)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.grid(alpha=.25, lw=.6, axis="y")
+    ax.set_axisbelow(True)
+    ax.tick_params(labelsize=9.6)
+    ax.legend(frameon=False, fontsize=9.4, loc="upper center", bbox_to_anchor=(0.5, 1.16),
+              handlelength=1.4, handletextpad=.6, labelspacing=.45)
+    fig.tight_layout()
+    out = ROOT / "plots/fig23_disclosure_bars.png"
+    fig.savefig(out, dpi=170, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":
