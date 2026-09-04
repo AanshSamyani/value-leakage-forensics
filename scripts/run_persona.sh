@@ -47,16 +47,24 @@ LAYER=$(python -c "import torch;print(torch.load('$VEC',map_location='cpu',weigh
 AUROC=$(python -c "import torch;print(f\"{torch.load('$VEC',map_location='cpu',weights_only=False)['auroc_heldout']:.3f}\")")
 echo "vector at layer $LAYER, held-out AUROC $AUROC"
 
-step "2/4  score every token of $COUNT rollouts per condition"
-python scripts/14_deception_scores.py --run "$RUN" --probe "$VEC" \
-    --conditions baseline above_good below_good --n "$COUNT" --max-len 16000 \
-    || echo "!!! scoring FAILED — continuing"
+if [ "$START_AT" -le 2 ]; then
+  step "2/4  score every token of $COUNT rollouts per condition"
+  python scripts/14_deception_scores.py --run "$RUN" --probe "$VEC" \
+      --conditions baseline above_good below_good --n "$COUNT" --max-len 16000 \
+      || echo "!!! scoring FAILED — continuing"
+else
+  step "2/4  skipped (START_AT=$START_AT)"
+fi
 
 if [ "${SKIP_STEER:-0}" = "1" ]; then step "stopping before steering (SKIP_STEER=1)"; exit 0; fi
 
+if [ "$START_AT" -le 3 ]; then
 step "3/4  calibrate alpha at layer $LAYER"
 python scripts/calibrate_steer_alpha.py --vector "$VEC" --run "$RUN" --layer "$LAYER" \
     --pcts "$PCT" -o "$CAL" || { echo "!!! calibration FAILED"; exit 1; }
+else
+  step "3/4  skipped (START_AT=$START_AT); reusing $CAL"
+fi
 
 step "4/4  steer at +/-${PCT}% of the residual-stream norm"
 REF=$(ls -d "$ROOT"/data/runs/qwen3.5-27b_2* | head -1)
