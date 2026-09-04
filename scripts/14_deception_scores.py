@@ -84,14 +84,16 @@ def main() -> None:
 
     P = torch.load(a.probe, map_location="cpu", weights_only=False)
     layer = int(P["layer"]); w = P["w"].numpy(); mu = P["mean"].numpy(); sd = P["scale"].numpy()
-    print(f"probe: layer {layer}, RepE held-out {P.get('auroc_repe_heldout', float('nan')):.3f}, "
-          f"roleplaying {P['auroc_roleplaying_lr']:.3f} (lr) / {P['auroc_roleplaying_mms']:.3f} (mms)")
-    if P.get("auroc_repe_heldout", 1.0) < 0.85:
-        print("WARNING: the probe did not learn the honest/deceptive framing on held-out RepE. "
-              "These scores are noise.")
-    elif P["auroc_roleplaying_lr"] < 0.8:
-        print("NOTE: RepE held-out is fine but roleplaying transfer is weak. The scores below may "
-              "still be readable, but treat cross-dataset claims with care.")
+    # works for any probe saved as {layer, w, mean, scale}: the RepE deception probe and the
+    # persona vectors both qualify, so the same scorer serves both.
+    A = P.get("auroc_heldout", P.get("auroc_roleplaying_lr", float("nan")))
+    print(f"probe: {P.get('method', P.get('trait', 'lr'))} at layer {layer}, "
+          f"held-out AUROC {A:.3f}")
+    if P.get("note"):
+        print(f"       {P['note']}")
+    if A < 0.85:
+        print("WARNING: the direction does not separate its own held-out data. These scores are "
+              "weak evidence at best.")
 
     cfg = json.loads((RUNS / a.run / "config.json").read_text())
     model_id = a.model or cfg.get("model_id") or cfg["model"]
