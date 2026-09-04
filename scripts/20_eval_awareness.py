@@ -131,20 +131,31 @@ def parse_score(text: str) -> int | None:
 
 
 def from_cache(run: Path) -> dict:
-    """Re-parse every cached judge response.
+    """Re-parse every cached judge response, taking the median across repeat samples.
 
-    The cache holds the judge's full text, so a parser fix is free to apply retroactively -- no
-    re-judging, and no dependence on the truncated copy kept in eval_awareness.json."""
+    The cache holds the judge's full text, so a parser fix applies retroactively -- no re-judging.
+    Keys are "<cond>/<i>" for a single sample and "<cond>/<i>#sK" for repeats; repeats collapse to
+    their median here. Calibration against hand labels put Haiku's mean shift at -0.16 (no
+    systematic leniency) but exact agreement at only 21% and within-one at 58% -- the error is
+    variance, not bias, and a median over independent samples is the direct remedy."""
     d = run / "judge_cache" / "eval_awareness"
-    out = {}
+    grouped = defaultdict(list)
     for f in sorted(d.glob("*.json")) if d.exists() else []:
         try:
             txt = json.loads(f.read_text()).get("text", "")
         except Exception:
             continue
         sc = parse_score(txt)
-        if sc is not None:
-            out[f.stem.replace("__", "/")] = {"score": sc, "text": txt[-700:]}
+        if sc is None:
+            continue
+        base = f.stem.replace("__", "/").split("#")[0]
+        grouped[base].append((sc, txt))
+    out = {}
+    for k, v in grouped.items():
+        scores = sorted(s for s, _ in v)
+        med = int(np.median(scores))
+        out[k] = {"score": med, "n_samples": len(v), "scores": scores,
+                  "text": v[0][1][-700:]}
     return out
 
 
@@ -199,8 +210,8 @@ async def main_async(a) -> None:
         raise SystemExit(f"no run at {run}")
     items = rollouts(run, a.limit)
     allitems = rollouts(run, 0)
-    chars = sum(len(p) + len(r) + len(a2) for _, _, p, r, a2 in items)
-    allch = sum(len(p) + len(r) + len(a2) for _, _, p, r, a2 in allitems)
+    chars = sum(len(p) + len(r) + len(a2) for _, _, p, r, a2 in items) * a.samples
+    allch = sum(len(p) + len(r) + len(a2) for _, _, p, r, a2 in allitems) * a.samples
     print(f"{len(items)} rollouts, {chars/1e6:.2f}M chars ~ {chars/3.6/1e6:.2f}M input tokens "
           f"(~${chars/3.6/1e6:.2f})")
     if a.limit:
@@ -220,20 +231,19 @@ async def main_async(a) -> None:
         judge = AnthropicJudge(model=a.judge_model,
                                cache_dir=run / "judge_cache" / "eval_awareness",
                                max_concurrent=a.concurrency)
-        res = await judge.run({f"{c}/{n}": RUBRIC.format(prompt=p, reasoning=r, answer=ans)
-                               for c, n, p, r, ans in items}, max_tokens=1400, desc="eval-aware")
+        prompts = {}
+        for c, n, p, r, ans in items:
+            body = RUBRIC.format(prompt=p, reasoning=r, answer=ans)
+            for k in range(a.samples):
+                prompts[f"{c}/{n}" + (f"#s{k}" if a.samples > 1 else "")] = body
+        await judge.run(prompts, max_tokens=1400, desc="eval-aware")
         print(judge.report())
-        scores, bad = {}, 0
-        for k, v in res.items():
-            s = parse_score(v.get("text", ""))
-            if s is None:
-                bad += 1
-            else:
-                scores[k] = {"score": s, "text": (v.get("text") or "")[-700:]}
-        if path.exists():                       # merge, so a pilot then a full run accumulate
-            scores = {**json.loads(path.read_text()), **scores}
+        scores = from_cache(run)                # median over samples, straight from the cache
         path.write_text(json.dumps(scores, indent=1))
-        print(f"  {len(scores)} scored ({bad} unparseable) -> {path}")
+        nb = sum(1 for v in scores.values() if v.get("n_samples", 1) < a.samples)
+        print(f"  {len(scores)} rollouts scored"
+              + (f" ({a.samples} samples each, {nb} short)" if a.samples > 1 else "")
+              + f" -> {path}")
 
     report(run, scores, a)
 
@@ -328,6 +338,9 @@ def main() -> None:
     p.add_argument("--concurrency", type=int, default=20)
     p.add_argument("--report", action="store_true")
     p.add_argument("--examples", type=int, default=0)
+    p.add_argument("--samples", type=int, default=1,
+                   help="independent judgements per rollout; the median is used. 3 cuts the "
+                        "per-rollout variance that calibration found, at 3x the cost.")
     asyncio.run(main_async(p.parse_args()))
 
 

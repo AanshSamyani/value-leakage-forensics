@@ -83,6 +83,9 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="qwen3.5-27b_20260823_223518")
     ap.add_argument("--show-gold", action="store_true")
+    ap.add_argument("--show-judge", action="store_true",
+                    help="print the judge's own reasoning for every boundary-crossing "
+                         "disagreement, to separate a rubric misreading from a missed sentence")
     a = ap.parse_args()
 
     if a.show_gold:
@@ -97,7 +100,8 @@ def main() -> None:
     if not path.exists():
         raise SystemExit(f"no scores at {path}\n  run scripts/20_eval_awareness.py first, then "
                          "push data/runs/*/analysis/eval_awareness.json")
-    got = {k: v["score"] for k, v in json.loads(path.read_text()).items()}
+    raw = json.loads(path.read_text())
+    got = {k: v["score"] for k, v in raw.items()}
     pairs = [(k, GOLD[k][0], got[k]) for k in GOLD if k in got]
     if not pairs:
         raise SystemExit("none of the gold rollouts are scored yet")
@@ -135,7 +139,12 @@ def main() -> None:
     for k, gs, hs in sorted(pairs, key=lambda p: -abs(p[1] - p[2])):
         if gs != hs:
             flag = "  <-- crosses the boundary" if (gs >= 4) != (hs >= 4) else ""
-            print(f"  {k:<16} gold {gs}  haiku {hs}{flag}\n      {GOLD[k][1]}")
+            spread = raw[k].get("scores")
+            extra = f"  samples {spread}" if spread and len(spread) > 1 else ""
+            print(f"  {k:<16} gold {gs}  haiku {hs}{flag}{extra}\n      {GOLD[k][1]}")
+            if a.show_judge and (gs >= 4) != (hs >= 4):
+                print(f"      --- judge said ---\n      "
+                      + raw[k].get("text", "")[-600:].replace("\n", "\n      "))
 
 
 if __name__ == "__main__":
