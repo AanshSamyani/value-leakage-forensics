@@ -1,0 +1,13 @@
+group,side,metric,p,k,n_steps,n_rollouts,ci_lo,ci_hi
+above_good,bad,P(toward_good | on bad side),0.6955017301038062,201.0,289.0,34.0,0.6505571211576128,0.7533310147615735
+above_good,good,P(toward_bad | on good side),0.5377969762419006,249.0,463.0,57.0,0.4979497479250978,0.5883944370714443
+baseline[good=above],bad,P(toward_good | on bad side),0.5127737226277372,281.0,548.0,34.0,0.48443182096272913,0.5406702890713551
+baseline[good=above],good,P(toward_bad | on good side),0.49876543209876545,404.0,810.0,43.0,0.4721856444795161,0.5276182919180962
+baseline[good=below],bad,P(toward_good | on bad side),0.49876543209876545,404.0,810.0,43.0,0.4721856444795161,0.5276182919180962
+baseline[good=below],good,P(toward_bad | on good side),0.5127737226277372,281.0,548.0,34.0,0.48443182096272913,0.5406702890713551
+below_good,bad,P(toward_good | on bad side),0.6945945945945946,257.0,370.0,54.0,0.6414488762011983,0.7541573848251494
+below_good,good,P(toward_bad | on good side),0.6044973544973545,457.0,756.0,65.0,0.5699019976126279,0.6423180487294782
+above_good,both,asymmetry: P(toward good|bad) - P(toward bad|good),0.15770475386190563,,,,,
+baseline[good=above],both,asymmetry: P(toward good|bad) - P(toward bad|good),0.01400829052897179,,,,,
+baseline[good=below],both,asymmetry: P(toward good|bad) - P(toward bad|good),-0.01400829052897179,,,,,
+below_good,both,asymmetry: P(toward good|bad) - P(toward bad|good),0.09009724009724007,,,,,
